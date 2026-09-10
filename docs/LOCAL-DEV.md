@@ -48,7 +48,7 @@ is `console`, so the API prints the message it would have sent.
 
 1. Go to <http://localhost:3000/sign-in> and enter any email address.
 2. Read the six-digit code from the API's log, or from
-   <http://localhost:5000/api/dev/outbox>, which keeps the last 50 messages and is
+   <http://localhost:5000/api/dev/outbox>, which keeps the last 25 messages and is
    only mounted when `NODE_ENV` is not `production`.
 3. Enter it. The first successful code for an unknown address creates the account.
 

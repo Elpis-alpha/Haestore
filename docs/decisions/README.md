@@ -15,3 +15,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [007](ADR-007-gmail-api-only-no-smtp.md) | Gmail HTTPS is the only mail transport; no SMTP | Accepted |
 | [008](ADR-008-typed-attribute-values.md) | Attribute values as a typed array, not a Map | Accepted |
 | [009](ADR-009-one-listing-endpoint-that-degrades.md) | One listing endpoint, which degrades and says so | Accepted |
+| [010](ADR-010-roles-are-read-not-carried.md) | Roles read per request, never snapshotted into a session | Accepted |

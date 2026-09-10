@@ -13,8 +13,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 2 | Catalog domain | ✅ Complete |
 | 3 | Search | ✅ Complete |
 | 4 | Storefront read path | ✅ Complete |
-| 5 | Auth | 🟡 Next |
-| 6 | Cart & wishlist | ⬜ Not started |
+| 5 | Auth | ✅ Complete |
+| 6 | Cart & wishlist | 🟡 Next |
 | 7 | Checkout | ⬜ Not started |
 | 8 | Admin console | ⬜ Not started |
 | 9 | Reviews, support, polish | ⬜ Not started |
@@ -564,23 +564,163 @@ a title and a price.
 
 ---
 
+## Phase 5 — Auth
+
+**Goal:** OTP request and verify, Redis sessions, the `__Host-` cookie, route guards,
+step-up, and the account area. The phase that makes Phase 2's admin surface reachable.
+
+Full write-up: **[AUTH.md](AUTH.md)**. New decision:
+**[ADR-010](decisions/ADR-010-roles-are-read-not-carried.md)**.
+
+### Done
+
+- **One endpoint for signing in and signing up**, because there is only one operation.
+  `POST /auth/otp/request` answers 202 for a known address, an unknown one and a
+  throttled one, with the same body shape — a withheld request returns a well-formed
+  challenge id that no challenge stands behind.
+- **The code**: six digits from `crypto.randomInt`, hashed
+  `HMAC-SHA256(pepper, challengeId + email + code)`, compared-and-deleted in one Lua
+  script so it is single-use under concurrency. 5 attempts, 5/address/hour, 20/IP/hour,
+  60-second resend cooldown, 10-minute life.
+- **Sessions** — opaque 256-bit ids, stored under **SHA-256 of the id** so a Redis dump
+  yields no usable cookies. 30-day sliding TTL renewed at most once a day, with the
+  cookie re-issued exactly when the server-side window moves.
+- **`__Host-hae_sid`**, `HttpOnly` / `Secure` / `SameSite=Lax` / `Path=/` / no `Domain`,
+  in development as well as production.
+- **Revocation at three levels**, including `$inc User.sessionVersion` as the nuclear
+  option — no Redis write, effective on the next request.
+- **Step-up** on the two admin routes that cannot be undone, answering 403
+  `STEP_UP_REQUIRED` so the session survives the re-verification.
+- **Mail**, over the Gmail HTTPS API reached with `fetch`. MIME composed in-repo and
+  tested. Verified at boot, never fatally. `GET /api/dev/outbox` guarded twice.
+- **The account area** — sign-in, account, signed-in devices with per-device revoke and
+  sign-out-everywhere, all `noindex`, none with a `loading.tsx`.
+- **The admin bootstrap works**: `ADMIN_EMAILS` grants `admin` at verification time, so
+  a fresh database yields a working administrator with no seeded password.
+
+### Verified, not assumed
+
+**Backend: 129 unit + 84 integration** (52 before this phase). **Frontend: 69.**
+Four guards were checked **by breaking them** and confirming the suite went red — the
+`sessionVersion` comparison, device ownership on revoke, the step-up staleness window,
+and the code's binding to its own account.
+
+Against the running stack, in a real browser:
+
+- **The `__Host-` cookie is accepted over `http://localhost`.** This was the phase's one
+  genuinely risky assumption — the failure mode is silent, because a browser that
+  declines the cookie logs nothing and sign-in simply never sticks. It works, so the
+  development path is the shipping path.
+- **The origin guard was isolated**: the same request, with the same valid session
+  cookie, is **200** from our origin and **403** from `https://evil.test`. Only the
+  `Origin` header differed.
+- **The nuclear revoke was exercised live**: one `$inc` in mongosh, and the very next
+  request from a browser still holding a valid cookie was 401 — including the admin
+  surface it had reached a moment earlier.
+- **A session survived an API restart**, because sessions are in Redis. A deploy does not
+  sign everyone out.
+- `?next=https://evil.test` landed on `/account`.
+- **`/` is still `○ Static`** in the production route table, which is the check on the
+  header not reading the session.
+- `cf:build` dry-run: **1089 KiB gzipped** against the 3 MiB limit — the whole auth
+  surface cost 27 KiB (1062 KiB at Phase 4).
+- Every Phase 4 behaviour re-smoked: `/shop/no-such-shelf` and `/product/nope` still
+  **404** rather than soft-404, and `?sort=newest&roast=light,dark&page=1` still 308s to
+  `/shop?roast=dark,light`.
+
+### Defects found by running it
+
+1. **`z.email().transform(trim)` rejects a pasted address.** The transform runs on the
+   way *out*, so `"  a@b.test "` fails validation and the shopper is told their address
+   is not an address. Normalisation now runs before validation. Found by the first unit
+   test written against the schema.
+2. **A successful sign-in that stayed on the sign-in form.** `router.refresh()` followed
+   by `router.push()` in the same tick: the refresh starts an RSC request for the current
+   route and the push is dropped while it is in flight. The cookie was set and nothing
+   moved. Order reversed.
+3. **The account page read `data.account` from a response whose field is `data.user`** —
+   and it typechecked, because the response type was hand-written next to the fetch. This
+   is exactly what ADR-001's generated types exist to prevent; the shape now comes from
+   `schema.d.ts` and the rename happens once, visibly, at the boundary.
+4. **The code field overflowed a 375px screen** — six 48px boxes and their gaps are
+   328px, against 279px of usable width. Measured at 377px against a 375px viewport,
+   which breaks the standard Phase 1 set. The boxes now flex and cap at 48px, and the
+   card's mobile padding was trimmed to keep them above the 44px touch target.
+5. **The account glyph squeezed the mobile search box to 80px** — 32px of it actual text,
+   after the icon and the padding. The drawer already carries a search field, so the
+   header's copy is now `hidden md:block`; exactly one of the two is ever present.
+
+Also fixed on inspection: `::ffff:127.0.0.1` on the device list, which was two bugs —
+one client reaching the API over both spellings of its address got two rate-limit
+buckets and twice the per-IP allowance.
+
+### Decisions taken during implementation
+
+- **ADR-010 — roles are read per request, never snapshotted.** A copy of the roles in
+  the session is a copy that goes stale, and the staleness window is exactly what an
+  admin demotion needs closed. One indexed `_id` lookup per *authenticated* request;
+  anonymous storefront traffic is untouched.
+- **The session id is hashed before it becomes a Redis key.** The plan said `sess:{sid}`.
+  Hashing costs nothing, makes a Redis dump useless, and makes the device list
+  publishable — the row id shown to the account page is the digest, so it revokes a
+  session without being able to impersonate one.
+- **Gmail is reached with `fetch`.** ADR-007 chose the transport; this is the
+  implementation. `googleapis` for one POST, plus nodemailer used only as a MIME builder
+  and then discarded, is a lot of tree for two HTTP calls. `mail/mime.ts` is 12 tests.
+- **A mail failure is a 503, not a comforting 202.** It is identical for every address
+  so it leaks nothing, and the challenge is discarded with the failed send.
+- **Step-up is mounted on real routes**, not shipped as an unused mechanism — the two
+  admin deletes. The Phase 2 precedent of no development bypass, applied forwards.
+- **The header does not read the session**, so the storefront keeps its prerender. The
+  account link is correct in both states and `/account` sorts it out.
+
+### Deviations from the plan
+
+- The hashed session key, above.
+- **No guest cookie yet.** `GUEST_COOKIE_SECRET` is in the environment and `hae_cid` is
+  specified in the plan's section 6 — it is set on first add-to-cart, which is Phase 6.
+  Adding it now would be a cookie with nothing behind it.
+- **No step-up UI**, for the reason above.
+
+### Things worth knowing before Phase 6
+
+- **The guest cookie must not be the session cookie.** `hae_cid` has to *survive* sign-in
+  so the cart can be merged; the sid has to *rotate* on it, against fixation. Rotation is
+  already implemented and takes a `refreshAuthAt` option — the guest-to-user upgrade is
+  another privilege change and must rotate too.
+- **The bag is the reason to revisit the header.** It needs per-request state, at which
+  point reading the session there costs nothing extra — and the account control can then
+  show who is signed in. Until then, `/` stays static.
+- **`attachSession` is mounted globally and is not a guard.** It decides who is calling,
+  never whether they may. Cart routes can read `req.auth` and treat its absence as "this
+  is a guest" rather than as an error.
+- **Never add a `loading.tsx` to a route that can `redirect()` or `notFound()`.** Same
+  mechanism as Phase 4, and the account area is now a second place it applies.
+- The admin `DELETE` routes are still absent from `openapi.json`, step-up included. See
+  AUTH.md's "known gap" — they go in with Phase 8, when a frontend has to handle
+  `STEP_UP_REQUIRED`.
+- `middleware.ts` now has two jobs and dispatches on pathname. Anything added to its
+  matcher needs a branch, or it will fall through to the listing canonicaliser.
+
+---
+
 ## Next action
 
-**Phase 5 — Auth.** OTP request and verify, Redis sessions, the `__Host-` cookie, route
-guards, step-up, and the account area. Docs due: `AUTH`, plus an ADR on sessions.
+**Phase 6 — Cart & wishlist.** Guest identity, re-pricing reads, merge with a report,
+and the drawer with optimistic updates. Docs due: `CART`.
 
-The groundwork is already laid and load-bearing:
+The groundwork is laid and the shape is already decided in the plan's section 6:
 
-- The `/api/*` rewrite in `next.config.ts` is what makes the `__Host-` prefix legal — the
-  browser only ever sees one origin. Server components bypass it on purpose; anything
-  session-bearing from the browser must not.
-- `requireRole` is mounted per-router and reads the role only from the server-side session.
-  **Every admin route currently answers 401**, deliberately, with no development bypass.
-  Phase 5 is what makes them reachable.
-- The mail transport is written here, against `MAIL_DRIVER=console` by default. Three things
-  carried forward from ADR-007: the Gmail API must be enabled on the Cloud project owning
-  `MAIL_CLIENT_ID` or sends return 403 `accessNotConfigured`; **mail failure must not be
-  fatal at boot**; and `GET /api/dev/outbox` must sit behind a *router-level*
-  `NODE_ENV !== 'production'` check, because message bodies contain live sign-in codes.
-- `radix-ui` ships `unstable_OneTimePasswordField`, which is worth using for the code entry.
-- `/auth/otp/request` must answer identically for known and unknown emails.
+- **`hae_cid`**, 128-bit, `HttpOnly`, stored hashed, set lazily on **first add-to-cart**
+  — not on first page view, so casual browsers get no cookie. `GUEST_COOKIE_SECRET` is
+  already in the environment.
+- **Merge happens inside the verify transaction**, which means `auth.service.ts` gains a
+  hook rather than the cart polling for a sign-in. Rotate the sid there as well: the
+  guest-to-user upgrade is a privilege change.
+- **Carts live in MongoDB, not Redis** — the rule from ARCHITECTURE.md is that Redis must
+  be safe to flush at 3 a.m., and a lost cart is a lost sale.
+- The merge algorithm's branches (collision, missing variant, price drift, stock clamp,
+  out of stock) are named in the plan's section 11 as unit tests, and the report is what
+  the shopper is shown rather than a silent reconciliation.
+- `attachSession` already populates `req.auth` on every route, so a cart handler reads it
+  and treats absence as "guest" — no new middleware.
