@@ -17,3 +17,6 @@ assets/.unsplash-cache/
 
 # Local service data
 .data/
+
+# Playwright MCP scratch output
+.playwright-mcp/

@@ -9,8 +9,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | # | Phase | Status |
 |---|---|---|
 | 0 | Foundations | ✅ Complete |
-| 1 | Design system | 🟡 Next |
-| 2 | Catalog domain | ⬜ Not started |
+| 1 | Design system | ✅ Complete |
+| 2 | Catalog domain | 🟡 Next |
 | 3 | Search | ⬜ Not started |
 | 4 | Storefront read path | ⬜ Not started |
 | 5 | Auth | ⬜ Not started |
@@ -103,8 +103,10 @@ API SIGTERM        exit 0, all stores closed cleanly, port released
 
 - **Env keys were renamed.** `back-end/.env.backup-2022` holds the original. Carried
   forward: Cloudinary, Unsplash, Stripe (as `STRIPE_SECRET_KEY`), the from-address.
-  Retired: `ITEM_PASSWORD` (the shared admin secret), `JWT_SECRET` (no JWTs),
-  `OVERSEER_*` (Gmail OAuth, replaced by SMTP/Mailpit).
+  Retired: `ITEM_PASSWORD` (the shared admin secret) and `JWT_SECRET` (no JWTs).
+  The `OVERSEER_*` Gmail OAuth keys came back in Phase 1 as `MAIL_CLIENT_ID`,
+  `MAIL_CLIENT_SECRET`, `MAIL_REFRESH_TOKEN` and `MAIL_REDIRECT_URI` — see
+  "Mail transport" below.
 - **`eslint-config-next` is unusable** on ESLint 9 flat config — it pulls in
   `@rushstack/eslint-patch`, which throws. Use `@next/eslint-plugin-next` directly.
 - **`npx` swallows signals.** Killing `npx tsx` orphans the Node process and leaves
@@ -113,11 +115,122 @@ API SIGTERM        exit 0, all stores closed cleanly, port released
 - **Unsplash keys are sufficient as supplied.** `UNSPLASH_ACCESS_KEY` alone authorizes
   search and download-tracking; the secret key is only for OAuth acting as a user.
 
+
+---
+
+## Phase 1 — Design system
+
+**Goal:** a token set that is verified rather than asserted, the motifs the logo
+actually contains, a primitive kit on Radix, and a route that proves all of it.
+
+Full write-up: **[DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)**. Live at `/styleguide`.
+
+### Done
+
+- **Tokens** in `front-end/src/app/globals.css`: the bark and paper ramps built from
+  the two given colours, and three dyes (verdigris, madder, weld) that exist only to
+  mean something.
+- **The surface contract** — `.surface-ground` / `-raised` / `-well` / `-paper`, each
+  declaring `--ink`, `--edge`, `--focus`, `--field`, `--good` / `--bad` / `--note`.
+  Components read the variables and never ask what they are sitting on.
+- **Motifs**: `Mark`, `Wordmark`, `Arch`, `ArchFrame`, `Leaf`, `SlabRule`, `VineRule`,
+  `Tag`, and the grain overlay.
+- **22 primitives** on Radix, styled from scratch — buttons, badges, the `Field`
+  composition, inputs, select, checkbox/radio/switch, dialog, drawer, tooltip, tabs,
+  accordion, toast, skeleton, plus `Price`, `Rating` and `QuantityStepper`.
+- **`src/lib/money.ts`** — integer minor units, exponent read from `Intl`.
+- **`/styleguide`** as a specimen sheet, printing each swatch's measured contrast.
+- The root `/` page rebuilt on the new tokens (it was still referencing the old
+  `cream-*` names, which Tailwind was silently dropping).
+
+### Verified, not assumed
+
+- **25 tests** across `src/design` and `src/lib`. `tokens.test.ts` parses `globals.css`
+  itself, so it asserts the bytes the browser is served rather than a copy — every
+  pairing in DESIGN-SYSTEM.md is a test, and any new `.surface-*` must declare the whole
+  contract or parsing fails by name.
+- **Both drift guards were checked by breaking them** and confirming the suite went red,
+  rather than trusting a green run.
+- **The surface contract was confirmed in a real browser**, not only in unit tests: the
+  same button markup on all four surfaces resolves to cream-on-brown at 10.5–16.8:1 and
+  ink-on-cream at 17.8:1, with the focus ring switching from weld to ink on paper.
+- **No page-level horizontal scroll at 375px** — only the colour table overflows, inside
+  its own `overflow-x-auto` container.
+- **Reduced motion checked by rendering at 300ms with the preference forced.**
+
+### Decisions taken during implementation
+
+- **ADR-006 — paper is the primary action.** The plan's `clay ~#C2703D` measured 2.0:1
+  against the ground. Deleted rather than re-toned; `moss`/`honey`/`brick` became
+  `verdigris`/`weld`/`madder`. This is the one place measurement overruled the plan.
+- **Floating things are paper.** Dialogs, drawers, menus and tooltips all take
+  `.surface-paper`. The ground is the shop; paper is where you transact.
+- **`prefers-reduced-motion` zeroes delay as well as duration** — forcing duration alone
+  leaves a staggered entrance holding `opacity: 0` for its full delay.
+- **Ratings are ink glyphs, not gold stars** — forced by weld measuring 1.8:1 on cream,
+  and a better answer than the workaround.
+- **`radix-ui` as one package** rather than ~15 `@radix-ui/react-*` entries. It also
+  ships `unstable_OneTimePasswordField`, which is worth using in Phase 5.
+- **vitest 2 → 5.** Cleared the critical advisory and five others while the repo still
+  had no tests to migrate.
+
+### Deviations from the plan
+
+- The palette, per ADR-006 above. The *roles* the plan fixed are all still filled.
+- `--radius-arch` is kept, but the arch is primarily a **stroke**, not a filled dome —
+  the plan's description implied the latter and it reads as a tombstone.
+- `motion` was **not** installed. Nothing in Phase 1 needed it; CSS keyframes plus
+  Radix's data-state attributes cover every transition here. It arrives when the cart
+  drawer and View Transitions do.
+
+### Mail transport
+
+The Gmail OAuth keys are back, and the env now carries `MAIL_DRIVER`:
+
+- `smtp` (default) → Mailpit on 1025 locally. Nothing leaves the machine.
+- `gmail-api` → Gmail over HTTPS 443 in production, because most VPS hosts block
+  outbound 25/465/587 as anti-spam policy and an SMTP send simply hangs until it times
+  out. See [GMAIL-API-MIGRATION-NOTE.md](GMAIL-API-MIGRATION-NOTE.md).
+
+The transport itself is written in Phase 5, when there is a first email to send. Two
+things from that note to carry forward: the Gmail API must be enabled in the Google Cloud
+project or it returns 403 `accessNotConfigured`, and **mail failure must not be fatal at
+boot** — a mail outage should not take the API down.
+
+### Known, accepted
+
+`npm audit` reports 6 build-time advisories in `front-end/`, down from 11. Two chains,
+neither reaching the Worker bundle: `sharp` ← `miniflare` ← `wrangler` (already at the
+latest release, so there is no upstream fix yet) and `postcss` ← `next` (fixed only in
+Next 16, and a major bump mid-build is not worth it). Revisit at Phase 11.
+
+### Things worth knowing before Phase 2
+
+- **Tailwind v4 reads a CSS variable as `bg-[var(--x)]`, not `bg-[--x]`.** The v3
+  shorthand is gone and fails silently. Setting one, `[--opsz:32]`, is unchanged.
+- **Unknown utilities fail silently too.** The root page kept `text-cream-50` after the
+  rename and simply lost its colour without a build error. Renaming a token means
+  grepping for its old name.
+- **`font-variation-settings` resets every axis it does not name.** All four are routed
+  through custom properties for exactly this reason.
+- **Headless anchor navigation does not settle** with `scroll-behavior: smooth`. Capture
+  full-height and crop instead of screenshotting `#anchor`.
+
 ---
 
 ## Next action
 
-**Phase 1 — the design system.** Build the token set out properly (contrast-verify
-every pair against the chocolate ground), the arch/leaf/grain motifs, the primitive
-kit on Radix, and a `/styleguide` route that proves it. Load the `frontend-design`
-skill before writing the first component.
+**Phase 2 — the catalog domain.** The heart of the rebuild, and the thing the old
+name promised and never delivered: `Category` with materialized ancestry and
+`attributeBindings[]`, `AttributeDefinition` with immutable `key`/`type`,
+`Product` with typed attribute values and embedded variants, effective-attribute
+resolution down the tree, the runtime Zod validator compiled per category and cached
+in Redis, and admin CRUD over all of it.
+
+Start from the plan's section 3 — it already settles the contested parts (typed
+attribute arrays over a `Map` or `{key,value}`, `validationMode: 'lenient'` as the
+default, `isVariantAxis` as eligibility rather than generation, and `stock.available`
+stored rather than computed). Phase 2 also emits `openapi.json` for the first time,
+which unblocks `npm run sync:types`.
+
+Docs due: `DATA-MODEL.md` and `ADAPTABLE-CATALOG.md`.
