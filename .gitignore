@@ -1,0 +1,19 @@
+# The two application repos are tracked independently.
+# See docs/ARCHITECTURE.md for why this is three repos and not a monorepo.
+/front-end/
+/back-end/
+
+node_modules/
+.DS_Store
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Seed image cache (large, regenerable, and Unsplash-rate-limited)
+assets/.unsplash-cache/
+
+# Local service data
+.data/

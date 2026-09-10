@@ -1,0 +1,31 @@
+{
+  "name": "haestore",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hæstore — an artisanal general store. Root repo: docs, brand assets, and local infrastructure.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "up": "docker compose up -d",
+    "up:api": "docker compose --profile api up -d --build",
+    "down": "docker compose down",
+    "reset": "docker compose down -v && docker compose up -d",
+    "logs": "docker compose logs -f",
+    "ps": "docker compose ps",
+    "mongo": "docker compose exec mongo mongosh haestore",
+    "redis": "docker compose exec redis redis-cli",
+    "mail": "echo 'Mailpit UI: http://localhost:8025'",
+    "dev": "npm run up && concurrently -n api,web -c magenta,cyan \"npm --prefix back-end run dev\" \"npm --prefix front-end run dev\"",
+    "install:all": "npm --prefix back-end install && npm --prefix front-end install",
+    "sync:types": "node scripts/sync-api-types.mjs",
+    "check": "npm --prefix back-end run check && npm --prefix front-end run check",
+    "probe": "node scripts/probe-infra.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "mongodb": "^6.12.0",
+    "redis": "^4.7.0"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}

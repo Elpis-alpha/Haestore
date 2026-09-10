@@ -1,0 +1,122 @@
+# Hæstore local infrastructure.
+#
+# Ports are deliberately offset from the defaults because this machine already
+# runs mongod on 27017 and a Redis container on 6379. See docs/LOCAL-DEV.md.
+#
+#   docker compose up -d                  # infrastructure only (normal dev)
+#   docker compose --profile api up -d    # + the API container (production-like)
+
+name: haestore
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: haestore-mongo
+    restart: unless-stopped
+    # A replica set is REQUIRED, not optional: a standalone mongod has neither
+    # multi-document transactions (checkout) nor change streams (search outbox).
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Idempotent self-initiation: rs.status() throws until the set exists.
+      # The member host is 'localhost:27017' so the advertised address resolves
+      # both inside the container and from the host via directConnection=true.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status().ok }
+          catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }
+        "
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: haestore-redis
+    restart: unless-stopped
+    # appendonly so OTP challenges and sessions survive a container restart in dev.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: haestore-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-haestore_dev_master_key_change_me}
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "127.0.0.1:7700:7700"
+    volumes:
+      - meili-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: haestore-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI — OTP codes are read from here in dev and in E2E
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8025/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    profiles: ["api"]
+    build:
+      context: ./back-end
+      dockerfile: Dockerfile
+    container_name: haestore-api
+    restart: unless-stopped
+    env_file: ./back-end/.env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGODB_URL: mongodb://mongo:27017/haestore?replicaSet=rs0&directConnection=true
+      REDIS_URL: redis://redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    ports:
+      # Bound to the docker bridge gateway, not 0.0.0.0 — reachable from the host
+      # and from other containers, but never published to the internet directly.
+      - "172.17.0.1:5003:5000"
+    depends_on:
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      meilisearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  mongo-data:
+  redis-data:
+  meili-data:
