@@ -13,7 +13,6 @@
     "ps": "docker compose ps",
     "mongo": "docker compose exec mongo mongosh haestore",
     "redis": "docker compose exec redis redis-cli",
-    "mail": "echo 'Mailpit UI: http://localhost:8025'",
     "dev": "npm run up && concurrently -n api,web -c magenta,cyan \"npm --prefix back-end run dev\" \"npm --prefix front-end run dev\"",
     "install:all": "npm --prefix back-end install && npm --prefix front-end install",
     "sync:types": "node scripts/sync-api-types.mjs",

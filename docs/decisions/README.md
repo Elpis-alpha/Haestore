@@ -12,3 +12,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [004](ADR-004-passwordless-otp-sessions.md) | Passwordless OTP + opaque Redis sessions | Accepted |
 | [005](ADR-005-embedded-variants.md) | Variants embedded on Product, not a collection | Accepted |
 | [006](ADR-006-paper-as-the-primary-action.md) | Paper is the primary action; no terracotta accent | Accepted |
+| [007](ADR-007-gmail-api-only-no-smtp.md) | Gmail HTTPS is the only mail transport; no SMTP | Accepted |

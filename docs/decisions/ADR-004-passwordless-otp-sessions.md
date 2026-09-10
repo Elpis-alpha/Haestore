@@ -69,8 +69,9 @@ compare-and-delete, so a code is single-use even under concurrent verification.
 
 ## Consequences
 
-- Sign-in requires a working mailbox, and a slow mail path is felt directly. Mailpit
-  covers local development and E2E reads codes straight from it.
+- Sign-in requires a working mailbox, and a slow mail path is felt directly. The
+  `console` mail driver covers local development, and E2E reads codes from the
+  dev outbox it keeps — see [ADR-007](ADR-007-gmail-api-only-no-smtp.md).
 - Redis is now on the authentication path. A Redis outage logs everyone out; it does
   not lose data.
 - `roles[]` bootstraps from an `ADMIN_EMAILS` allowlist at verification time, so a

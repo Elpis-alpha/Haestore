@@ -68,23 +68,6 @@ services:
       timeout: 3s
       retries: 20
 
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: haestore-mailpit
-    restart: unless-stopped
-    environment:
-      MP_MAX_MESSAGES: 500
-      MP_SMTP_AUTH_ACCEPT_ANY: "true"
-      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
-    ports:
-      - "127.0.0.1:1025:1025"   # SMTP
-      - "127.0.0.1:8025:8025"   # web UI — OTP codes are read from here in dev and in E2E
-    healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8025/readyz || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
   api:
     profiles: ["api"]
     build:
@@ -99,8 +82,6 @@ services:
       MONGODB_URL: mongodb://mongo:27017/haestore?replicaSet=rs0&directConnection=true
       REDIS_URL: redis://redis:6379
       MEILISEARCH_HOST: http://meilisearch:7700
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
     ports:
       # Bound to the docker bridge gateway, not 0.0.0.0 — reachable from the host
       # and from other containers, but never published to the internet directly.

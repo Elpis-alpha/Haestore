@@ -34,8 +34,6 @@ stock local install.
 | MongoDB | `27018` | replica set `rs0`, no auth in dev |
 | Redis | `6380` | appendonly on, so sessions survive a restart |
 | Meilisearch | `7700` | master key from `.env` |
-| Mailpit SMTP | `1025` | the API sends here in dev |
-| Mailpit web | `8025` | **read OTP sign-in codes here** |
 | API | `5000` | `5003` on `172.17.0.1` when run via the `api` profile |
 | Web | `3000` | |
 
@@ -45,11 +43,17 @@ containers but never published to the internet directly.
 
 ## Signing in locally
 
-There are no passwords. Request a code, then read it from Mailpit:
+There are no passwords, and by default nothing leaves the machine: `MAIL_DRIVER`
+is `console`, so the API prints the message it would have sent.
 
 1. Go to <http://localhost:3000/sign-in> and enter any email address.
-2. Open <http://localhost:8025> and read the six-digit code.
+2. Read the six-digit code from the API's log, or from
+   <http://localhost:5000/api/dev/outbox>, which keeps the last 50 messages and is
+   only mounted when `NODE_ENV` is not `production`.
 3. Enter it. The first successful code for an unknown address creates the account.
+
+Set `MAIL_DRIVER=gmail-api` to send for real. **There is no SMTP transport** —
+see [ADR-007](decisions/ADR-007-gmail-api-only-no-smtp.md).
 
 To get an admin account, put the address in `ADMIN_EMAILS` in `back-end/.env`
 **before** signing in; the role is granted at verification time.
@@ -90,8 +94,10 @@ npm --prefix back-end run seed    # then reseed
 **`MongoServerError: not primary`** — the set has not finished initiating. Wait for
 the healthcheck (`docker compose ps` shows `healthy`) and retry.
 
-**Emails do not appear** — check `SMTP_HOST=localhost` and `SMTP_PORT=1025` in
-`back-end/.env`. Mailpit accepts any credentials.
+**Sign-in codes do not appear** — with `MAIL_DRIVER=console` they are in the API's
+log and at `/api/dev/outbox`; there is no mail UI to open. With
+`MAIL_DRIVER=gmail-api`, a 403 `accessNotConfigured` means the Gmail API is not
+enabled on the Google Cloud project that owns `MAIL_CLIENT_ID`.
 
 **Search returns nothing after seeding** — Meilisearch indexes asynchronously.
 Run `npm --prefix back-end run search:reindex` and check

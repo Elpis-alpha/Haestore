@@ -16,7 +16,6 @@ const MONGO = process.env.PROBE_MONGODB_URL
   ?? 'mongodb://127.0.0.1:27018/haestore_probe?replicaSet=rs0&directConnection=true';
 const REDIS = process.env.PROBE_REDIS_URL ?? 'redis://127.0.0.1:6380';
 const MEILI = process.env.PROBE_MEILI_HOST ?? 'http://127.0.0.1:7700';
-const MAILPIT = process.env.PROBE_MAILPIT_URL ?? 'http://127.0.0.1:8025';
 
 const results = [];
 const check = async (name, fn) => {
@@ -135,11 +134,6 @@ await check('meilisearch: is available', async () => {
   if (!res.ok) throw new Error(`health returned ${res.status}`);
   const body = await res.json();
   if (body.status !== 'available') throw new Error(`status is ${body.status}`);
-});
-
-await check('mailpit: is accepting mail', async () => {
-  const res = await fetch(`${MAILPIT}/readyz`);
-  if (!res.ok) throw new Error(`readyz returned ${res.status}`);
 });
 
 const failed = results.filter(([s]) => s === 'FAIL').length;

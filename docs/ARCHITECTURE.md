@@ -100,7 +100,7 @@ duration of the rebuild.
 
 ## Where side effects happen
 
-Never inline in a request or a webhook. An SMTP timeout inside a Stripe webhook
+Never inline in a request or a webhook. A mail-provider timeout inside a Stripe webhook
 handler means the handler does not return 200, Stripe retries, and a payment gets
 re-processed because the *mail server* was slow.
 

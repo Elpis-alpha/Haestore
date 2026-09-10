@@ -33,11 +33,13 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
   three histories stay independent.
 - `.editorconfig` at the root — the first line of defence against the old codebase's
   double-blank-line habit returning.
-- `docker-compose.yml` with Mongo (replica set `rs0`), Redis, Meilisearch and Mailpit.
-  Ports offset to 27018 / 6380 / 7700 / 1025+8025 because this machine already runs
-  mongod on 27017 and a Redis container on 6379.
-- `scripts/probe-infra.mjs` — **9/9 passing**. Asserts the platform properties the
-  design depends on, from the host, against the real containers.
+- `docker-compose.yml` with Mongo (replica set `rs0`), Redis and Meilisearch. Ports
+  offset to 27018 / 6380 / 7700 because this machine already runs mongod on 27017 and
+  a Redis container on 6379. (Mailpit was here too until Phase 1 removed SMTP; see
+  ADR-007.)
+- `scripts/probe-infra.mjs` — **8/8 passing** (9 until the Mailpit probe went with
+  Mailpit). Asserts the platform properties the design depends on, from the host,
+  against the real containers.
 - Docs: `README`, `ARCHITECTURE`, `LOCAL-DEV`, ADR-001…005.
 
 ### Verified, not assumed
@@ -183,19 +185,27 @@ Full write-up: **[DESIGN-SYSTEM.md](DESIGN-SYSTEM.md)**. Live at `/styleguide`.
   Radix's data-state attributes cover every transition here. It arrives when the cart
   drawer and View Transitions do.
 
-### Mail transport
+### Mail transport — SMTP removed entirely (ADR-007)
 
-The Gmail OAuth keys are back, and the env now carries `MAIL_DRIVER`:
+The Gmail OAuth keys are back, and `MAIL_DRIVER` is now `console` (default) or
+`gmail-api`. **There is no SMTP transport and Mailpit is gone** — its service, its
+probe, its npm script and ports 1025/8025 with it.
 
-- `smtp` (default) → Mailpit on 1025 locally. Nothing leaves the machine.
-- `gmail-api` → Gmail over HTTPS 443 in production, because most VPS hosts block
-  outbound 25/465/587 as anti-spam policy and an SMTP send simply hangs until it times
-  out. See [GMAIL-API-MIGRATION-NOTE.md](GMAIL-API-MIGRATION-NOTE.md).
+The reasoning is in [ADR-007](decisions/ADR-007-gmail-api-only-no-smtp.md): most VPS
+hosts block outbound 25/465/587, so SMTP could never have been the production path, and
+keeping it locally would have meant the only path ever exercised in development was the
+one that cannot ship. `console` formats and prints instead, with no network path at all,
+so it cannot be mistaken for evidence that sending works.
 
-The transport itself is written in Phase 5, when there is a first email to send. Two
-things from that note to carry forward: the Gmail API must be enabled in the Google Cloud
-project or it returns 403 `accessNotConfigured`, and **mail failure must not be fatal at
-boot** — a mail outage should not take the API down.
+The transport itself is written in Phase 5, when there is a first email to send. Three
+things to carry forward:
+
+- The Gmail API must be enabled on the Cloud project owning `MAIL_CLIENT_ID`, or sends
+  return 403 `accessNotConfigured`.
+- **Mail failure must not be fatal at boot.** A mail outage should not take the API down.
+- `GET /api/dev/outbox` must be mounted behind a router-level
+  `NODE_ENV !== 'production'` check, not a per-handler guard. It exposes message bodies,
+  and message bodies contain live sign-in codes.
 
 ### Known, accepted
 

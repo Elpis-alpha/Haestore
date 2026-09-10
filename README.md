@@ -44,7 +44,7 @@ Hæstore actually builds it:
 ```bash
 cp .env.example .env
 npm install && npm run install:all
-npm run up          # Mongo (replica set), Redis, Meilisearch, Mailpit
+npm run up          # Mongo (replica set), Redis, Meilisearch
 npm run probe       # assert the platform supports transactions + change streams
 npm --prefix back-end run seed
 npm run dev
