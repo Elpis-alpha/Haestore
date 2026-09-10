@@ -117,6 +117,61 @@ await check('mongo: arrayFilters stock guard refuses to over-decrement', async (
 });
 
 await db.dropDatabase().catch(() => {});
+/**
+ * The three assertions the adaptable attribute design rests on. They are here rather
+ * than in a unit test because they are claims about MongoDB, not about our code, and
+ * the answer could change with a server version.
+ */
+await check('mongo: a compound index over one array path is accepted', async () => {
+  const c = db.collection('probe_attrs');
+  await c.deleteMany({});
+  await c.insertOne({
+    status: 'active',
+    attributes: [
+      { key: 'roast', valueString: 'medium' },
+      { key: 'weight_g', valueNumber: 250 },
+      { key: 'notes', valueStrings: ['floral', 'bright'] },
+    ],
+  });
+  // Two fields of the same array element, and an array *within* an element — both are
+  // one multikey path, so both are legal. The multiselect case works.
+  await c.createIndex({ status: 1, 'attributes.key': 1, 'attributes.valueString': 1 });
+  await c.createIndex({ status: 1, 'attributes.key': 1, 'attributes.valueNumber': 1 });
+  await c.createIndex({ status: 1, 'attributes.key': 1, 'attributes.valueStrings': 1 });
+});
+
+await check('mongo: two parallel array paths in one index are refused', async () => {
+  const c = db.collection('probe_attrs');
+  await c.updateOne({}, { $set: { categoryAncestors: ['a', 'b'] } });
+  try {
+    await c.createIndex({ status: 1, categoryAncestors: 1, 'attributes.key': 1 });
+  } catch (error) {
+    if (error.codeName === 'CannotIndexParallelArrays') return;
+    throw error;
+  }
+  // This is why categoryAncestors is not in the attribute index: the branch filter and
+  // the attribute filter cannot share one index, which is a large part of why the
+  // storefront reads from Meilisearch instead (ADR-003).
+  throw new Error('expected CannotIndexParallelArrays, but the index was created');
+});
+
+await check('mongo: an attribute range query uses an index, not a collection scan', async () => {
+  const c = db.collection('probe_attrs');
+  const plan = await c
+    .find({
+      status: 'active',
+      attributes: { $elemMatch: { key: 'weight_g', valueNumber: { $gte: 200, $lte: 1000 } } },
+    })
+    .explain('queryPlanner');
+  if (!JSON.stringify(plan.queryPlanner.winningPlan).includes('IXSCAN')) {
+    // The claim typed value slots exist to make true: "weight between 250 and 1000 g"
+    // is answerable by an index. A Mixed-typed { key, value } pair could not do this,
+    // because a Mixed index only compares within one BSON type bracket.
+    throw new Error('winning plan has no IXSCAN — typed value slots are not indexable');
+  }
+  await c.drop();
+});
+
 await client.close();
 
 await check('redis: responds, and expiry is enforced on read (OTP depends on this)', async () => {

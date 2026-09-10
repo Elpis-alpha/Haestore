@@ -10,8 +10,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 |---|---|---|
 | 0 | Foundations | ✅ Complete |
 | 1 | Design system | ✅ Complete |
-| 2 | Catalog domain | 🟡 Next |
-| 3 | Search | ⬜ Not started |
+| 2 | Catalog domain | ✅ Complete |
+| 3 | Search | 🟡 Next |
 | 4 | Storefront read path | ⬜ Not started |
 | 5 | Auth | ⬜ Not started |
 | 6 | Cart & wishlist | ⬜ Not started |
@@ -226,21 +226,124 @@ Next 16, and a major bump mid-build is not worth it). Revisit at Phase 11.
 - **Headless anchor navigation does not settle** with `scroll-behavior: smooth`. Capture
   full-height and crop instead of screenshotting `#anchor`.
 
+
+---
+
+## Phase 2 — Catalog domain
+
+**Goal:** the feature the project is named for. Admin-defined categories, attributes and
+variants, with the storefront generated from them.
+
+Full write-ups: **[ADAPTABLE-CATALOG.md](ADAPTABLE-CATALOG.md)** and
+**[DATA-MODEL.md](DATA-MODEL.md)**.
+
+### Done
+
+- **Three models**: `AttributeDefinition` (immutable `key`/`type`), `Category`
+  (materialised ancestry including self, `attributeBindings[]`, `suppressedKeys[]`,
+  `validationMode`), `Product` (typed attribute array, embedded variants, denormalised
+  `priceRange`/`inStock`/`categoryAncestors`).
+- **Effective attribute resolution** down the tree, nearest ancestor winning, with
+  suppression applied before each node's own bindings — the ordering that makes
+  "suppress then rebind differently" expressible.
+- **Runtime Zod validator** compiled per category from that set, cached in process,
+  `z.strictObject` so unknown keys are refused.
+- **Variant grids**: eligibility on the category, selection on the product, cartesian
+  product as a suggestion, warn at 24, refuse above 100, `dryRun` to see the count first.
+- **Services and routes**: full admin CRUD plus the public catalogue, with the filter
+  panel generated from admin-defined attributes.
+- **`openapi.json`** — 16 paths, 10 schemas, emitted from the same Zod schemas the routes
+  validate with. `npm run sync:types` now produces the frontend's `schema.d.ts`, and it
+  compiles: the cross-repo contract from ADR-001 is closed end to end.
+
+### Verified, not assumed
+
+**51 tests** — 34 unit, 17 integration against a real in-process MongoDB replica set.
+
+Three MongoDB claims the design rests on are now permanent probes (`npm run probe`,
+11/11), because they are claims about the database rather than about our code:
+
+1. A compound index over **two fields of one array element** is accepted — including an
+   array *inside* an element, so multiselect works.
+2. **Two parallel array paths in one index are refused** (`CannotIndexParallelArrays`).
+   This is why `categoryAncestors` is not in the attribute index, and a large part of why
+   the storefront reads from Meilisearch.
+3. A range query on a typed numeric slot produces an **IXSCAN** — the claim typed value
+   slots exist to make true.
+
+The integration suite proves the adaptable claim itself: bind high and it applies down,
+suppress and rebind, store a product against attributes invented at runtime, add a
+*required* attribute to a category holding live products and watch them stay sellable
+while being flagged, rename and reparent a category and see every affected product's
+denormalised ancestry move with it.
+
+### Decisions taken during implementation
+
+- **ADR-008 — typed attribute array** over a `Map` (wildcard indexes support only one
+  predicate) or `{key, value}` with `Mixed` (a Mixed index only compares within a BSON
+  type bracket, so a numeric range is unanswerable).
+- **zod 3 → 4.** `zod-to-openapi` 9 requires it, and Phase 2 is entirely zod-driven, so
+  the moment to move was before writing thousands of lines against the old API rather
+  than after. `z.string().url()` became `z.url()`; nothing else changed.
+- **`requireRole` is mounted once per router**, and reads the role only from the
+  server-side session — never a body, query or header. Nothing populates the session
+  until Phase 5, so **every admin route currently answers 401**. That is the correct
+  failure direction, and there is deliberately no development bypass to forget to remove.
+- **Test tiers split.** `npm test` is unit-only and sub-second; `npm run test:integration`
+  spins up a replica set via `mongodb-memory-server`. A standalone `mongod` has neither
+  transactions nor change streams, so testing against one would pass locally and fail on
+  the first `withTransaction` in production.
+- **`registerModel`** guards against `OverwriteModelError` when a module graph is
+  evaluated twice — vitest isolates per file, `tsx watch` re-evaluates on reload.
+
+### Deviations from the plan
+
+None. The plan's section 3 settled the contested parts and all of them survived contact.
+
+### Defects found by the tests being written
+
+- `buildSku` truncated to 24 characters without re-trimming, so a cut landing on a word
+  boundary produced `SINGLE-ORIGIN-ETHIOPIAN-` on a shelf label.
+- The create path never generated a SKU, although the request schema advertised that it
+  would — every product with an omitted SKU failed model validation.
+
+### Things worth knowing before Phase 3
+
+- **`filterableAttributes` is derived, not authored.** `AttributeDefinition.find({ isFilterable: true })`
+  is already indexed for exactly this; Phase 3 maps each key to `attr.<key>` and syncs on
+  a debounce, because `updateSettings` triggers a partial re-index and six admin saves
+  must produce one task rather than six.
+- **The degraded listing already returns `page.degraded: true`**, so the storefront can
+  tell the Mongo fallback from the search path without guessing.
+- **`displayValue` is denormalised at write time.** Changing a definition's option labels
+  needs a backfill across products — an admin action that already triggers a reindex, so
+  the two belong in the same job.
+- **Version counters live in Redis** (`catalog:v:tree`, `catalog:v:defs`). Anything else
+  caching per-category data should key on them rather than inventing its own invalidation.
+
 ---
 
 ## Next action
 
-**Phase 2 — the catalog domain.** The heart of the rebuild, and the thing the old
-name promised and never delivered: `Category` with materialized ancestry and
-`attributeBindings[]`, `AttributeDefinition` with immutable `key`/`type`,
-`Product` with typed attribute values and embedded variants, effective-attribute
-resolution down the tree, the runtime Zod validator compiled per category and cached
-in Redis, and admin CRUD over all of it.
+**Phase 3 — search.** Meilisearch becomes the storefront read model (ADR-003). Index
+products at product grain, derive `filterableAttributes` from
+`AttributeDefinition.find({ isFilterable: true })` rather than authoring them, and sync
+settings on a 30-second debounce so six admin saves produce one re-index task.
 
-Start from the plan's section 3 — it already settles the contested parts (typed
-attribute arrays over a `Map` or `{key,value}`, `validationMode: 'lenient'` as the
-default, `isVariantAxis` as eligibility rather than generation, and `stock.available`
-stored rather than computed). Phase 2 also emits `openapi.json` for the first time,
-which unblocks `npm run sync:types`.
+Then the parts that make it trustworthy: a **transactional outbox** written inside the
+same transaction as the domain write, drained by a change stream into BullMQ — the only
+arrangement where the index cannot silently diverge on a crash between "saved to Mongo"
+and "enqueued the job". Rebuilds go into `products_rebuild` and `swapIndexes`, never
+`deleteAllDocuments` in place, which would show an empty shop for the duration.
 
-Docs due: `DATA-MODEL.md` and `ADAPTABLE-CATALOG.md`.
+Facet counts are the subtle part: checkboxes within one attribute are OR'd, and their
+counts must be computed as if that attribute's own filter were absent, or every
+unselected value in a group you have filtered on reads zero. That needs one extra query
+per *selected* group at `hitsPerPage: 0`, batched into a single `/multi-search` and
+merged server-side.
+
+The frontend never talks to Meilisearch directly: filter params are validated against
+`AttributeDefinition` before becoming a filter expression, and `status = active` is
+appended server-side so drafts cannot leak.
+
+Docs due: `SEARCH.md`.
