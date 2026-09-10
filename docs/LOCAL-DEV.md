@@ -102,3 +102,19 @@ enabled on the Google Cloud project that owns `MAIL_CLIENT_ID`.
 **Search returns nothing after seeding** — Meilisearch indexes asynchronously.
 Run `npm --prefix back-end run search:reindex` and check
 <http://localhost:7700/indexes> with the master key.
+
+**A filter I just defined has not appeared** — expected, for up to about 30 seconds.
+`filterableAttributes` is synced on a debounce so that six admin saves produce one
+partial re-index instead of six. The listing keeps working throughout: the new
+attribute simply has no facet yet, and a filter on it comes back in `ignoredFilters`.
+Watch for `search: settings synced` in the API log.
+
+**The listing says `page.degraded: true`** — MongoDB answered instead of Meilisearch,
+so there are no facets and no attribute filtering. Check `/readyz`, then the API log
+for `search: listing failed`, which carries the underlying reason. The shop still
+sells in this state; the filter panel is what is missing.
+
+**Products are in Mongo but never reach the index** — look for
+`search: took the relay lease` at startup. Exactly one process runs the change stream;
+if none holds the lease the 60-second sweep still drains the outbox, just slowly.
+`npm --prefix back-end run search:reconcile` prints the drift between the two stores.

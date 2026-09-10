@@ -11,8 +11,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 0 | Foundations | ✅ Complete |
 | 1 | Design system | ✅ Complete |
 | 2 | Catalog domain | ✅ Complete |
-| 3 | Search | 🟡 Next |
-| 4 | Storefront read path | ⬜ Not started |
+| 3 | Search | ✅ Complete |
+| 4 | Storefront read path | 🟡 Next |
 | 5 | Auth | ⬜ Not started |
 | 6 | Cart & wishlist | ⬜ Not started |
 | 7 | Checkout | ⬜ Not started |
@@ -323,27 +323,150 @@ None. The plan's section 3 settled the contested parts and all of them survived 
 
 ---
 
+## Phase 3 — Search
+
+**Goal:** Meilisearch becomes the storefront read model, kept in sync by a transactional
+outbox, with facet counts that survive being used.
+
+Full write-up: **[SEARCH.md](SEARCH.md)**. New decision:
+**[ADR-009](decisions/ADR-009-one-listing-endpoint-that-degrades.md)**.
+
+### Done
+
+- **The search document** — one per product, a listing projection rather than a copy of
+  the catalogue. Only `active` products are indexed at all; a draft is *deleted* from the
+  index rather than stored and filtered out later.
+- **Derived settings** — `filterableAttributes` computed from
+  `AttributeDefinition.find({ isFilterable: true })`, never authored, debounced 30 s under
+  a fixed job id so six admin saves produce one partial re-index.
+- **Transactional outbox** — four kinds (`product`, `category-branch`,
+  `attribute-definition`, `settings`), appended inside the same transaction as the domain
+  write. Every product write now goes through one `inWriteTransaction` helper, so there is
+  no way to add a write that forgets to record the reindex intent.
+- **Relay** — a change stream drains the outbox into BullMQ within milliseconds, with a
+  60-second sweep underneath it for anything the stream never delivered, and a Redis lease
+  so only one process runs the stream.
+- **Disjunctive facets** — one extra `hitsPerPage: 0` query per *selected* group, batched
+  into a single `/multi-search` and merged server-side. Unfiltered listings stay one query.
+- **The filter trust boundary** — params validated against the category's effective
+  attributes, values checked against the definition's own option list, numbers clamped to
+  declared bounds, everything escaped, and `status = "active"` appended server-side.
+- **Rebuild with swap** — builds into `products_rebuild`, applies settings *before* the
+  swap, guards the count, then swaps atomically and keeps the old index as a rollback.
+- **Hourly reconciliation** that warns rather than self-heals.
+- **`displayValue` backfill** — the Phase 2 note is closed: editing a definition's option
+  labels re-renders the denormalised display values across the catalogue and reindexes what
+  it touched, in one job, reusing the same `toDisplayValue` the write path uses.
+
+### Verified, not assumed
+
+**144 tests** — 92 unit, 52 integration against a real in-process replica set *and a real
+Meilisearch*. The probe is now **15/15**, four of them Meilisearch claims:
+
+1. A nested `attr.<key>` is accepted as a filterable attribute — the whole document shape
+   depends on it.
+2. **A facet filtered on collapses its own counts**, with the other values absent rather
+   than zero. This is not a bug to route around; it is the reason `facets.ts` exists, and a
+   future Meilisearch that changed it would make that file redundant.
+3. **An unescaped filter value can reach past its literal** and return drafts — the reason
+   `filter-expression.ts` escapes, recorded as a fact about the platform.
+4. **`swapIndexes` exchanges settings along with documents**, which is why the rebuild
+   applies settings before swapping rather than after.
+
+The end-to-end run is the real proof: a live API, a product written through the services,
+and the relay carrying it to the index unaided — then defining an attribute that exists
+nowhere in either codebase and watching it become a working filter with its own facet
+counts, with **zero degraded requests** across the run.
+
+### Decisions taken during implementation
+
+- **ADR-009 — one listing endpoint that degrades and says so.** `page.degraded` names the
+  engine; a fallback behind a second URL is one nobody ever exercises.
+- **Pagination moved from keyset to page numbers.** Meilisearch paginates by offset and
+  bounds depth with `maxTotalHits`, so a cursor would have to be emulated on top of an
+  offset and pretend. The same bound is what makes `.skip()` affordable in the fallback, so
+  both engines now refuse the same pages.
+- **`isFilterableType` excludes `text` and `dimension`**, and the *same* guard derives the
+  index settings and the generated filter panel. Applying it in one place only is how you
+  get a panel offering a filter the index refuses to answer.
+- **Only active products are indexed**, so a draft cannot leak even if a filter is ever
+  built wrong. The server-side `status = "active"` stays anyway.
+- **The rebuild guard is two rules, not one.** A proportional 90% test is meaningless in a
+  four-product shop, where archiving one item is a 25% drop; refusing it would teach an
+  operator that `--force` is the normal way to rebuild. So: refuse a rebuild that found
+  *nothing* at any size, and apply the ratio only above 50 live documents.
+
+### Deviations from the plan
+
+- Pagination, as above — the plan's own canonical URL already said `page=2`.
+- **`variantKeys` remains deferred**, as ADR-003 specified. The product-grain imperfection
+  (a product with (whole-bean, 1 kg) and (ground, 250 g) matching `grind=ground AND
+  weight_g=1000`) still stands and is still accepted.
+
+### Three defects the tests and the live run found
+
+All three shared a signature: nothing threw, nothing logged, and the index simply stopped
+being true. Each now has a regression test.
+
+1. **A colon in a BullMQ job id.** Ids were `product:<id>`; BullMQ rejects a custom id
+   containing `:` because it namespaces its own keys with one. The relay caught and logged
+   it, so the visible symptom was not an error — it was an index that never updated. Ids
+   now join with `__`.
+2. **Retained completed jobs suppressing the next enqueue.** A custom job id is unique
+   across every state BullMQ retains, `completed` included, and `add()` with an existing id
+   creates nothing and *reports success*. With `removeOnComplete: { count: 100 }` the
+   second edit of a product was silently discarded. Now `removeOnComplete: true`, so an id
+   collides only while the work is outstanding — the debounce that was wanted, without the
+   suppression that was not.
+3. **Leader election that only ran once.** The relay took the Redis lease at startup and,
+   if it lost, never asked again — so a crashed leader took the fast path down until
+   someone restarted a process. It is now contested on the same timer that renews it.
+
+A fourth was caught before it could ship: for the ~30 s the settings debounce is pending, a
+newly defined attribute is in the catalogue and not in the index, so the panel would ask to
+facet on a field Meilisearch does not have — and Meilisearch rejects the **whole request**
+for that. One new attribute took the entire filter panel down for every shopper in that
+category. `search/index-capabilities.ts` now asks the index what it can currently answer
+and requests only that.
+
+### Things worth knowing before Phase 4
+
+- **The listing response shape changed**, and the frontend types are already synced:
+  `data` uses `id` (not `_id`), `page` is `{page, perPage, total, totalPages, degraded}`,
+  and there are two new fields, `facets` and `ignoredFilters`.
+- **Render `facets` straight from `filterUi`.** `checkbox`/`swatch`/`select` use `values`;
+  `range` uses `range`. Nothing in the frontend should name an attribute key.
+- **A facet value with `count: 0` must be disabled, not hidden.** The disjunctive pass
+  exists precisely so the shopper can see that a value exists and currently matches
+  nothing; hiding it undoes the whole thing.
+- **`ignoredFilters` is not noise.** It is the difference between showing unfiltered results
+  and claiming to have filtered them — surface it.
+- **`degraded: true` means hide the panel**, not render it inert.
+- **URL canonicalisation is still Phase 4's job**: sort the params and values and drop
+  defaults, so two shoppers clicking the same filters in different orders share a cache key
+  and produce one indexable URL.
+- The dev stack now needs Meilisearch running for the search path; without it the API boots
+  degraded rather than failing, which is deliberate.
+
+---
+
 ## Next action
 
-**Phase 3 — search.** Meilisearch becomes the storefront read model (ADR-003). Index
-products at product grain, derive `filterableAttributes` from
-`AttributeDefinition.find({ isFilterable: true })` rather than authoring them, and sync
-settings on a 30-second debounce so six admin saves produce one re-index task.
+**Phase 4 — the storefront read path.** The phase where the design pays off: home, the shop
+listing with its generated facet panel, the product detail page, View Transitions and the
+Cloudinary image loader.
 
-Then the parts that make it trustworthy: a **transactional outbox** written inside the
-same transaction as the domain write, drained by a change stream into BullMQ — the only
-arrangement where the index cannot silently diverge on a crash between "saved to Mongo"
-and "enqueued the job". Rebuilds go into `products_rebuild` and `swapIndexes`, never
-`deleteAllDocuments` in place, which would show an empty shop for the duration.
+Everything the listing needs is already served and typed — `facets` renders from `filterUi`
+alone, and `ignoredFilters` and `degraded` say when to tell the shopper something is
+missing rather than quietly showing them less.
 
-Facet counts are the subtle part: checkboxes within one attribute are OR'd, and their
-counts must be computed as if that attribute's own filter were absent, or every
-unselected value in a group you have filtered on reads zero. That needs one extra query
-per *selected* group at `hitsPerPage: 0`, batched into a single `/multi-search` and
-merged server-side.
+The parts that need care: **URL canonicalisation** (params and values sorted, defaults
+dropped) so two users clicking the same filters in different orders share one cache key and
+one indexable URL; the facet panel calling `router.replace(canonical, { scroll: false })`
+inside `useTransition`, so Back restores prior filter state and the pending flag drives the
+skeleton; and `motion` finally arriving, which Phase 1 deliberately did not install.
 
-The frontend never talks to Meilisearch directly: filter params are validated against
-`AttributeDefinition` before becoming a filter expression, and `status = active` is
-appended server-side so drafts cannot leak.
+`sort` stays a whitelisted enum on the wire. A zero-count facet value is disabled, never
+hidden.
 
-Docs due: `SEARCH.md`.
+Docs due: `FRONTEND.md`.

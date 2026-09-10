@@ -94,9 +94,17 @@ commit loses the job if the process dies in between, and enqueueing before commi
 indexes writes that never happened. An hourly reconciliation sweep compares document
 counts and re-pushes anything past the watermark, as a backstop.
 
+Beneath the change stream sits a second backstop on a shorter loop: a sweep every 60
+seconds for outbox rows still unprocessed. A change stream can miss work in ways that are
+invisible from inside it — the process was down when the row was written, the resume token
+has aged off the oplog — so the stream makes indexing fast and the sweep makes it certain.
+
 Reindexing builds into `products_rebuild` and uses Meilisearch's atomic index **swap**.
 A naive `deleteAllDocuments()` followed by re-adding shows an empty shop for the
 duration of the rebuild.
+
+Implemented in Phase 3; the whole arrangement, including three ways it silently broke
+before it worked, is written up in **[SEARCH.md](SEARCH.md)**.
 
 ## Where side effects happen
 

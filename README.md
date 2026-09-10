@@ -45,13 +45,15 @@ Hæstore actually builds it:
 cp .env.example .env
 npm install && npm run install:all
 npm run up          # Mongo (replica set), Redis, Meilisearch
-npm run probe       # assert the platform supports transactions + change streams
+npm run probe       # 15 assertions about the platform, not about our code
 npm --prefix back-end run seed
 npm run dev
 ```
 
-Storefront at <http://localhost:3000>, API at <http://localhost:5000>, and sign-in
-codes at <http://localhost:8025> — there are no passwords.
+Storefront at <http://localhost:3000> and API at <http://localhost:5000>. There are no
+passwords: sign-in codes are printed by the API with the default `console` mail driver,
+and also readable at `/api/dev/outbox` outside production. There is no local SMTP server
+to check — see [ADR-007](docs/decisions/ADR-007-gmail-api-only-no-smtp.md).
 
 Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)**.
 
