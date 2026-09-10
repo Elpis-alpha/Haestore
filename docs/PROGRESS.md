@@ -12,8 +12,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 1 | Design system | ✅ Complete |
 | 2 | Catalog domain | ✅ Complete |
 | 3 | Search | ✅ Complete |
-| 4 | Storefront read path | 🟡 Next |
-| 5 | Auth | ⬜ Not started |
+| 4 | Storefront read path | ✅ Complete |
+| 5 | Auth | 🟡 Next |
 | 6 | Cart & wishlist | ⬜ Not started |
 | 7 | Checkout | ⬜ Not started |
 | 8 | Admin console | ⬜ Not started |
@@ -450,23 +450,137 @@ and requests only that.
 
 ---
 
+## Phase 4 — Storefront read path
+
+**Goal:** the phase where the design pays off. Home, the shop listing with its generated
+facet panel, the product page, View Transitions and the Cloudinary image loader.
+
+Full write-up: **[FRONTEND.md](FRONTEND.md)**.
+
+### Done
+
+- **URL canonicalisation** (`lib/listing/params.ts`) — keys sorted, values sorted, defaults
+  dropped, numerics compared as numbers. Every filter change resets the page; sort does not.
+  A 308 in `middleware.ts` corrects anything non-canonical.
+- **The generated filter panel** — a control per `filterUi` (checkbox, swatch, select,
+  range, toggle), assembled from facets the backend derived from admin-defined attributes.
+  Nothing in the frontend names an attribute.
+- **Zero-count values disabled, never hidden**; `ignoredFilters` surfaced as removable chips
+  with their reason; `degraded: true` hides the panel and says why.
+- **Refinement as a transition** — results stay on screen, dimmed and `aria-busy`, instead
+  of the shelf emptying and refilling on every tick.
+- **Home** — an arched doorway hero, the shelves, and what was just put out. Every section
+  is real catalogue data or is not rendered.
+- **Product page** — bounded arch gallery, variant picker with unreachable combinations
+  struck through, stock stated in shopper's words, specification table beside the price,
+  related shelf streamed in below.
+- **View Transitions** — the product card grows into the product page, verified in a real
+  browser rather than assumed.
+- Site chrome, `not-found`, `error`, and no horizontal scroll at 375px.
+
+### Verified, not assumed
+
+**62 frontend tests**, 37 of them on the canonicaliser. Both sorting guards and the
+redirect-loop guard were checked **by breaking them** and confirming the suite went red.
+
+Against the running stack, with a live API and a real Meilisearch:
+
+- Ticking two boxes produced `?roast=dark,light` and **the disjunctive counts held** —
+  Light 2, Medium 1, Dark 2, unchanged while filtered on roast. That is the extra
+  `hitsPerPage: 0` query per selected group, visible.
+- A bookmark naming an archived attribute rendered a removable chip plus "This category
+  does not use that attribute."
+- **Meilisearch was actually stopped.** The shelf stayed open, sortable and paginated, the
+  panel disappeared, and the page said the filter had not been applied — ADR-009's whole
+  argument, exercised rather than described.
+- `startViewTransition` was hooked and a card clicked: one transition, carrying
+  `product-espresso-house-blend`.
+- `cf:build` succeeds; dry-run deploy reports **1062 KiB gzipped** against the 3 MiB limit
+  (783 KiB at Phase 0; three real pages and middleware account for the rest).
+
+### Three defects found by running it rather than reading it
+
+1. **Soft 404s across the whole site.** `loading.tsx` wraps a route in a Suspense boundary,
+   which lets Next flush the shell and **commit a 200** before the page has decided whether
+   the product exists. `not-found.tsx` rendered under a 200 — the one status a crawler is
+   told not to trust. Both `loading.tsx` files are gone and must not come back; the product
+   page's related row now streams from its own boundary *below* the existence check.
+2. **An infinite 308.** The middleware first compared `url.search` against the canonical
+   form. `NextURL` normalises a comma to `%2C` and `URLSearchParams.toString()` does not, so
+   `?roast=dark,light` was permanently redirected to itself. Both sides now go through one
+   encoder, and `respell` has a regression test.
+3. **The filter panel threw on every listing.** `Input` reads its id and aria wiring from
+   `Field`'s context and throws without it; the range controls used a bare label. It had
+   been failing all along and the streaming shell was rendering the error boundary under a
+   200 — so fixing defect 1 is what made it visible.
+
+Also fixed on inspection: `500 g g` on the specification table (`displayValue` already
+carries the unit), and a product-page layout that put a 600px arch beside a column holding
+a title and a price.
+
+### Decisions taken during implementation
+
+- **`push`, not `replace`, for refinements.** The plan said `replace`, which defeats the
+  reason it gave — Back is meant to restore the previous filter state, and a replaced entry
+  is the one Back cannot return to.
+- **Canonicalisation moved to middleware**, because a redirect from a server component is
+  too late to be a status code.
+- **The range control is two numbers and a bar, not a slider.** Precise where a shopper is
+  being precise, and operable by keyboard.
+- **`esbuild` declared explicitly.** `@opennextjs/cloudflare` imports it without declaring
+  it; `cf:build` had been working on hoisting luck and broke the moment the tree was
+  re-laid. Pinned to `^0.28.1`, the range vite also accepts.
+- **No cart control and no add-to-bag**, deliberately, with no disabled placeholder —
+  the Phase 2 precedent of admin routes answering 401 rather than shipping a bypass.
+
+### Deviations from the plan
+
+- `push` over `replace`, above.
+- **`motion` was installed, went unused through the entire phase, and was removed.** Radix
+  data-state attributes plus CSS keyframes cover the panel and the drawer; the card-to-page
+  move is the browser's own. It arrives when something needs it.
+- **No marquee ticker.** `globals.css` rules ambient motion out of this system, and that is
+  the more recent and better-argued of the two documents. A moving band over a grain
+  overlay is also barely readable.
+- The plan's `<Suspense>`-driven skeletons became a dimmed in-place results region, forced
+  by the soft-404 finding and better behaviour regardless.
+
+### Things worth knowing before Phase 5
+
+- **Never add a `loading.tsx` to a route that can call `notFound()`.** See above. If a route
+  needs streaming, put the boundary below the decision.
+- **The header has no cart and no account control yet.** Phase 5 adds the account entry
+  point and Phase 6 the bag; both go in `components/site/header.tsx`, which reads its
+  category tree with `softly` and must keep doing so.
+- **`SearchField` no longer reads `useSearchParams`.** It was removed to drop a Suspense
+  boundary while chasing the soft 404 — which turned out not to be the cause, but the
+  simpler component is the better one: a fresh search should not inherit the filters of a
+  shelf it is leaving. If a sign-in form needs the current URL, read it on the page and pass
+  it down rather than reintroducing the boundary in the layout.
+- **Axis values have no labels of their own** (see FRONTEND.md's "one gap"). Closing it is a
+  backend change and belongs with the Phase 8 variant grid.
+- `middleware.ts` matches `/shop` only. Auth guards will want their own matcher entries;
+  keep them off `/_next/*`.
+
+---
+
 ## Next action
 
-**Phase 4 — the storefront read path.** The phase where the design pays off: home, the shop
-listing with its generated facet panel, the product detail page, View Transitions and the
-Cloudinary image loader.
+**Phase 5 — Auth.** OTP request and verify, Redis sessions, the `__Host-` cookie, route
+guards, step-up, and the account area. Docs due: `AUTH`, plus an ADR on sessions.
 
-Everything the listing needs is already served and typed — `facets` renders from `filterUi`
-alone, and `ignoredFilters` and `degraded` say when to tell the shopper something is
-missing rather than quietly showing them less.
+The groundwork is already laid and load-bearing:
 
-The parts that need care: **URL canonicalisation** (params and values sorted, defaults
-dropped) so two users clicking the same filters in different orders share one cache key and
-one indexable URL; the facet panel calling `router.replace(canonical, { scroll: false })`
-inside `useTransition`, so Back restores prior filter state and the pending flag drives the
-skeleton; and `motion` finally arriving, which Phase 1 deliberately did not install.
-
-`sort` stays a whitelisted enum on the wire. A zero-count facet value is disabled, never
-hidden.
-
-Docs due: `FRONTEND.md`.
+- The `/api/*` rewrite in `next.config.ts` is what makes the `__Host-` prefix legal — the
+  browser only ever sees one origin. Server components bypass it on purpose; anything
+  session-bearing from the browser must not.
+- `requireRole` is mounted per-router and reads the role only from the server-side session.
+  **Every admin route currently answers 401**, deliberately, with no development bypass.
+  Phase 5 is what makes them reachable.
+- The mail transport is written here, against `MAIL_DRIVER=console` by default. Three things
+  carried forward from ADR-007: the Gmail API must be enabled on the Cloud project owning
+  `MAIL_CLIENT_ID` or sends return 403 `accessNotConfigured`; **mail failure must not be
+  fatal at boot**; and `GET /api/dev/outbox` must sit behind a *router-level*
+  `NODE_ENV !== 'production'` check, because message bodies contain live sign-in codes.
+- `radix-ui` ships `unstable_OneTimePasswordField`, which is worth using for the code entry.
+- `/auth/otp/request` must answer identically for known and unknown emails.

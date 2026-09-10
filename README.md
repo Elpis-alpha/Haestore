@@ -65,6 +65,7 @@ Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)*
 | [DATA-MODEL](docs/DATA-MODEL.md) | Collections, indexes, and how money and stock are represented |
 | [ADAPTABLE-CATALOG](docs/ADAPTABLE-CATALOG.md) | Categories, attributes, variants, and generated facets |
 | [SEARCH](docs/SEARCH.md) | Meilisearch as the read model, and how it stays in sync |
+| [FRONTEND](docs/FRONTEND.md) | The storefront read path: URL state, the generated panel, view transitions |
 | [AUTH](docs/AUTH.md) | Passwordless OTP and opaque Redis sessions |
 | [CART](docs/CART.md) | Guest identity, re-pricing, and the sign-in merge |
 | [CHECKOUT](docs/CHECKOUT.md) | Order state machine, Stripe, PayPal, idempotency |
