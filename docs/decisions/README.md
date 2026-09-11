@@ -17,3 +17,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [009](ADR-009-one-listing-endpoint-that-degrades.md) | One listing endpoint, which degrades and says so | Accepted |
 | [010](ADR-010-roles-are-read-not-carried.md) | Roles read per request, never snapshotted into a session | Accepted |
 | [011](ADR-011-cart-merge-takes-max.md) | A quantity collision on merge takes MAX, not SUM | Accepted |
+| [012](ADR-012-no-payment-sdks.md) | Payment providers reached with `fetch`, not their SDKs | Accepted |

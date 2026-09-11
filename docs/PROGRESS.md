@@ -15,8 +15,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 4 | Storefront read path | ✅ Complete |
 | 5 | Auth | ✅ Complete |
 | 6 | Cart & wishlist | ✅ Complete |
-| 7 | Checkout | 🟡 Next |
-| 8 | Admin console | ⬜ Not started |
+| 7 | Checkout | ✅ Complete |
+| 8 | Admin console | 🟡 Next |
 | 9 | Reviews, support, polish | ⬜ Not started |
 | 10 | Seed & docs | ⬜ Not started |
 | 11 | Deploy | ⬜ Not started |
@@ -831,26 +831,166 @@ were about *requests that should not have been made*.
 
 ---
 
+## Phase 7 — Checkout
+
+**Goal:** Stripe and PayPal, `markOrderPaid`, the order state machine, stock reservation
+and its sweeper, outbox email.
+
+Full write-ups: **[CHECKOUT.md](CHECKOUT.md)** and **[PAYMENTS.md](PAYMENTS.md)**.
+New decision: **[ADR-012](decisions/ADR-012-no-payment-sdks.md)**.
+
+### Done
+
+- **The order status machine, enforced in the query filter** — `predecessorsOf(next)` in a
+  `$in`, never an application `if`. A `null` return *is* the answer: the transition was
+  illegal, log it, return 200, do not retry.
+- **`markOrderPaid` is the only function that moves money-state**, called from three
+  places — webhook, return-page reconcile, PayPal capture. Its filter is
+  `{_id, status: 'pending_payment'}`, which matches exactly once because nothing returns
+  to `pending_payment`. It verifies the amount **before** the write and leaves a
+  mismatched order unpaid with the discrepancy recorded.
+- **Stock reservation** on the `arrayFilters` guard Phase 0's probe proved, with the
+  availability test inside the write. All-or-nothing across lines with an explicit
+  rollback, and a sweeper that cancels expired unpaid orders and returns the stock.
+- **Four independent guards at four distances**: `Idempotency-Key` at the edge, the status
+  filter in `markOrderPaid`, a unique index on `payment.intentId`, and a unique index on
+  `{provider, eventId}` for webhook dedupe.
+- **Stripe** — PaymentIntent with the deterministic key `pi:{orderId}`, created *outside*
+  the checkout transaction. Webhook signature verified against the raw bytes, every `v1`
+  checked, `timingSafeEqual`, tolerance enforced.
+- **PayPal** — the direct repair of the 2022 defect. All five checks from the server's own
+  response: order `COMPLETED`, `custom_id` matches, capture `COMPLETED`, exact minor-unit
+  amount, matching currency.
+- **Guest checkout end to end**, with a `claimToken` returned once and stored only as an
+  HMAC; `claimGuestOrders` fills in the Phase 6 placeholder and clears the token on claim.
+- **The receipt through an outbox** committed with the payment — swept rather than
+  streamed, with the post-commit enqueue as a fast path that is free to fail.
+- **Checkout, return and order-history pages**, and the checkout button the cart page
+  deliberately shipped without in Phase 6.
+- **`openapi.json`** — 39 paths, 23 schemas; `schema.d.ts` regenerated.
+
+### Verified, not assumed
+
+**Backend: 297 unit + 165 integration** (173 + 124 before this phase). **Frontend: 108**
+(87 before).
+
+Two guards were checked **by breaking them** and confirming the suite went red — the
+`status: 'pending_payment'` filter and the sweeper's status filter.
+
+Against the running stack, with real Stripe test keys and real PayPal sandbox credentials:
+
+- **A full guest purchase completed with zero webhooks delivered.** The payment succeeded
+  at Stripe, the order stayed `pending_payment` with **zero** `payment_events` recorded,
+  and the return page's reconcile moved it to `paid`. The path that ships is the path that
+  is exercised.
+- **The same `payment_intent.succeeded` resent three times, plus a reconcile on top** —
+  one `paid` entry in the history, stock unmoved, one order, one receipt, one event row.
+  This is the test the plan names by itself.
+- **The hand-written signature verifier was cross-checked against a real Stripe
+  signature** before anything was built on it, and then exercised live against real
+  deliveries forwarded by the CLI.
+- **The sweeper** canceled an expired unpaid order and returned exactly its 2 units, while
+  leaving both paid orders untouched.
+- **PayPal** registered a real sandbox order with `custom_id` = our order id, `invoice_id`
+  = the order number and `32.00 USD` from the decimal converter; capturing an unapproved
+  order was refused and the order stayed unpaid.
+- **A guest order appeared in `/api/orders` after signing in**, and its emailed claim link
+  stopped working the moment the account owned it.
+- The receipt was really sent over the Gmail API, itemised and correct.
+- `cf:build` dry-run: **1155 KiB gzipped** against the 3 MiB limit (1115 at Phase 6 — the
+  whole checkout, Stripe Elements included, cost about 40 KiB). `/` is still `○ Static`.
+
+### Decisions taken during implementation
+
+- **ADR-012 — no server-side payment SDKs.** Both providers are three to five HTTP calls,
+  and PayPal's webhook verification is a call back to them rather than a local
+  computation. The one hand-written piece that matters, Stripe's signature verifier, is
+  cross-checked against a real signature and tested by every way it could wrongly accept.
+  The browser still gets `@stripe/stripe-js`, because a PCI-compliant card field is not
+  something to hand-roll.
+- **`grandTotal === subtotal`.** The shop charges no delivery and no tax, and the cart and
+  checkout now say so as a fact rather than deferring it to a later screen. The totals are
+  still a breakdown, and every amount check reads `grandTotal` specifically, so adding a
+  shipping line later changes one function rather than five.
+- **A failed card is not a cancellation.** The shopper can try another card on the same
+  intent; releasing their stock mid-attempt would hand it to somebody else. Only the
+  reservation's expiry ends an abandoned checkout. A *denied PayPal capture* does cancel,
+  because the approval is spent.
+- **Releasing stock is guarded on a `stockReserved` flag**, not derived from the status, so
+  the sweeper, an admin and a webhook can all reach the same order and the stock comes
+  back exactly once.
+- **The order outbox is swept, not streamed.** A second change stream is a second resume
+  token, lease and reconnect loop; nobody notices a receipt three seconds late.
+
+### Deviations from the plan
+
+- **Shipping and tax do not exist**, so `grandTotal === subtotal`. The plan never specified
+  either, and inventing a tax engine was out of scope. The breakdown is in the schema so
+  the check sites are already correct when one arrives.
+- **Pagination on `/api/orders` uses `.skip()`**, like the degraded listing, rather than
+  the keyset the plan's section 7 asks for generally. An order history is bounded by how
+  much one person has bought and is capped at 60 per page.
+
+### Three defects found by running it rather than reading it
+
+1. **Every guest shared one idempotency owner.** The middleware read a `req.guestKeyHash`
+   that nothing ever set, so all signed-out callers fell through to `anon` — meaning one
+   guest's key could replay another guest's order response, client secret included. Found
+   by the integration test written for exactly that property.
+2. **Order numbers were unreadable in the one place they are read.** The alphabet omits
+   `O`, `I` and `L` so the *generator* cannot emit an ambiguous character — but nothing
+   handled the *reader*, who sees `HAE-CJ0RTHPK` in a humanist face with an unslashed zero
+   and types `HAE-CJORTHPK`. That lookup 404'd. `normaliseOrderNumber` now folds `O`→`0`
+   and `I`/`L`→`1` and strips spacing, which is safe precisely because the generator never
+   emits those letters. Found by looking at a rendered confirmation page.
+3. **The payment form was dark ink on the dark ground.** Stripe draws its field labels on
+   the host background, so a Payment Element mounted straight onto `.surface-ground` put
+   "Card number" and "Expiration date" in near-invisible contrast. The payment step is now
+   a paper card — which is Phase 1's own rule, *the ground is the shop and paper is where
+   you transact* — and the Stripe appearance is toned to the paper tokens. Found in a
+   browser; a unit test could not have.
+
+### Things worth knowing before Phase 8
+
+- **`PAYPAL_WEBHOOK_ID` is unset**, so the PayPal webhook route refuses events rather than
+  trusting them unverified. The demo does not need it; a real deployment taking PayPal
+  money does.
+- **`GET /api/catalog/products/:slug` returns `_id` while the listing returns `id`** — a
+  pre-existing inconsistency noticed while scripting the live run, not touched in this
+  phase. Worth settling with the admin console's product forms.
+- **The admin surface still needs the order side**: `transition`, `cancelOrder` and
+  `consumeAll` exist and are tested, and nothing calls them yet. `consumeAll` is the one
+  place `onHand` moves outside an admin correction, and belongs on the "mark shipped"
+  action.
+- **`reconcileOrderWithProvider` is the repair path** for an order stuck in
+  `pending_payment` because a webhook was lost. Phase 8 should expose it as an admin
+  button; it is already idempotent and already runs the same five PayPal checks.
+- The admin `DELETE` routes are **still** absent from `openapi.json`, step-up included —
+  the Phase 5 note stands, and Phase 8 is where it is paid off.
+- **The backend is still on vitest 2.1.8** while the frontend moved to 5. The Phase 6 note
+  stands; the suites are now large enough that a runner regression would be caught.
+
+
+---
+
 ## Next action
 
-**Phase 7 — Checkout.** Stripe + PayPal, `markOrderPaid`, the order state machine, stock
-reservation and its sweeper, outbox email. Docs due: `CHECKOUT`, `PAYMENTS`.
+**Phase 8 — Admin console.** The attribute builder, the storefront composer with
+versioning, and the order, customer and review surfaces. Docs due: `ADMIN`.
 
-The plan's section 6 settles the shape, and three of its claims are now cheaper to make
-good on than they were:
+Three things are already waiting for it:
 
-- **The order status machine is enforced in the query filter, never in application `if`s.**
-  `findOneAndUpdate({_id, status: {$in: predecessorsOf(next)}})` returning `null` means the
-  transition was illegal — log it, return 200, do not retry. Phase 6's cart claim is the
-  same pattern, already exercised against a replayed delivery.
-- **`POST /checkout/session` re-prices from live data, reserves stock and inserts the
-  Order in one transaction**, then creates the PaymentIntent **outside** it with the
-  deterministic key `pi:{orderId}`. Never hold a transaction open across a third-party
-  HTTP call.
-- **The demo must not require the Stripe CLI.** The return page calls
-  `reconcileOrderWithProvider`, which funnels into the same `markOrderPaid` as the webhook.
-  Test that path with webhooks explicitly disabled.
+- **The admin API has been answering 401 since Phase 2** and the `DELETE` routes with
+  step-up are still absent from `openapi.json`. Phase 5 deferred that to "when a frontend
+  has to handle `STEP_UP_REQUIRED`" — this is that phase.
+- **The order side of the state machine is built and unused.** `transition`, `cancelOrder`
+  and `consumeAll` are tested and nothing calls them. "Mark shipped" is where `consumeAll`
+  belongs, and it is the only place `onHand` moves outside an admin correction.
+- **`reconcileOrderWithProvider` wants an admin button.** It is the repair path for an
+  order stranded by a lost webhook, it is idempotent, and it already runs the same five
+  PayPal checks as the capture.
 
-PayPal is the direct repair of the 2022 app's worst defect, and all five checks —
-status `COMPLETED`, `custom_id`, currency, exact minor-unit amount, capture status — are
-verified from the server's own response and never from the client.
+The storefront composer is the part with a genuine design question in it: publishing is a
+version insert plus a status flip in one transaction, never an in-place edit, with a
+partial unique index guaranteeing exactly one published version per handle — so rollback
+is `publish(handle, n-1)` and the homepage is never half-updated.
