@@ -14,8 +14,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 3 | Search | ✅ Complete |
 | 4 | Storefront read path | ✅ Complete |
 | 5 | Auth | ✅ Complete |
-| 6 | Cart & wishlist | 🟡 Next |
-| 7 | Checkout | ⬜ Not started |
+| 6 | Cart & wishlist | ✅ Complete |
+| 7 | Checkout | 🟡 Next |
 | 8 | Admin console | ⬜ Not started |
 | 9 | Reviews, support, polish | ⬜ Not started |
 | 10 | Seed & docs | ⬜ Not started |
@@ -688,9 +688,10 @@ buckets and twice the per-IP allowance.
   so the cart can be merged; the sid has to *rotate* on it, against fixation. Rotation is
   already implemented and takes a `refreshAuthAt` option — the guest-to-user upgrade is
   another privilege change and must rotate too.
-- **The bag is the reason to revisit the header.** It needs per-request state, at which
-  point reading the session there costs nothing extra — and the account control can then
-  show who is signed in. Until then, `/` stays static.
+- ~~**The bag is the reason to revisit the header.**~~ **Superseded by Phase 6.** It did
+  not need per-request state on the server: the API writes the bag count to a readable
+  cookie, so a statically prerendered header shows a correct badge and `/` stays
+  `○ Static`. See CART.md, "The two readable cookies".
 - **`attachSession` is mounted globally and is not a guard.** It decides who is calling,
   never whether they may. Cart routes can read `req.auth` and treat its absence as "this
   is a guest" rather than as an error.
@@ -704,23 +705,152 @@ buckets and twice the per-IP allowance.
 
 ---
 
+## Phase 6 — Cart & wishlist
+
+**Goal:** guest identity, re-pricing reads, merge with a report, and the drawer with
+optimistic updates.
+
+Full write-up: **[CART.md](CART.md)**. New decision:
+**[ADR-011](decisions/ADR-011-cart-merge-takes-max.md)**.
+
+### Done
+
+- **The line shape that repairs the 2022 cart** — integer minor units for the unit price,
+  and **no stored total at all**. `lineTotal` is computed by multiplication on every read;
+  the integration suite asserts the field's absence on the stored document.
+- **`lineKey` = `<productId>_<variantId>`**, derived rather than generated, which is what
+  lets the merge compare key by key instead of guessing at similarity.
+- **Re-pricing on read** — one query for the whole cart, live prices adopted, and a split
+  between `quantity` (what was asked for) and `sellableQuantity` (what can be bought), so
+  the basket never edits itself while somebody is looking at it and the total never
+  includes stock that does not exist.
+- **`__Host-hae_cid`**, 128-bit, `HttpOnly`, stored as an HMAC, **set only on the first
+  add-to-cart**. A visitor who browses and leaves gets no cookie.
+- **The merge**, inside the verify transaction: claim → reassign-or-merge → report →
+  clear the cookie. MAX on a collision, current prices adopted, out-of-stock moved to
+  `savedForLater`, unavailable lines dropped and named. Seven-day tombstone behind Undo.
+- **`/api/cart` and `/api/wishlist`**, 33 paths and 20 schemas in `openapi.json`, with the
+  frontend's `schema.d.ts` regenerated.
+- **The drawer, the cart page, the wishlist page**, and the add-to-bag and save controls
+  the Phase 4 product page deliberately shipped without.
+
+### Verified, not assumed
+
+**Backend: 173 unit + 124 integration** (129 + 84 before this phase). **Frontend: 87**
+(69 before).
+
+The three pure cores carry most of it — 20 tests on the merge, 15 on re-pricing, 12 on
+the frontend's optimistic layer — because those are the places where being wrong produces
+a **valid cart and no error**, which is the failure mode the whole arrangement is built
+around.
+
+Against the running stack, in a real browser:
+
+- **A page view set no cookie; the first add-to-cart set both.** Checked from an empty
+  jar, which is the only way to observe an absence.
+- **The shelf price was moved under a full bag** in mongosh and the cart said "The price
+  changed from $19.00 to $22.00", with the summary flagging it.
+- **The whole merge end to end**: 2 × Sumatra on the account, 1 × Espresso as a guest,
+  sign in → 3 pieces, $74.00, a report naming both changes, `hae_bag=3` in the header.
+- **The same guest cookie at a second sign-in reported `mergeReport: false`** and nothing
+  moved — the claim guard exercised rather than described.
+- **Undo restored the account's own line; a second undo answered 409.**
+- **`/` is still `○ Static`**, which is the property the readable-cookie arrangement
+  exists to protect.
+- `cf:build` dry-run: **1115 KiB gzipped** against the 3 MiB limit (1089 at Phase 5 — the
+  whole bag cost 26 KiB).
+- No horizontal scroll at 375px on the cart page, the product page, or in the drawer.
+
+### Decisions taken during implementation
+
+- **ADR-011 — MAX, not SUM, on a quantity collision.** The two errors are not symmetric:
+  undercounting is a shopper typing a bigger number, overcounting is a shopper paying for
+  things they did not order, silently, discovered at the payment screen or after delivery.
+- **The header did not have to become dynamic.** Phase 5 predicted it would. Instead the
+  API writes the bag count to a readable `hae_bag` cookie, so a statically prerendered
+  header renders a correct badge and the drawer fetches the lines when it opens. That
+  note in Phase 5 is superseded.
+- **`__Host-` on the guest cookie**, which the plan did not ask for. The browser-enforced
+  no-`Domain` contract that earned it for the session cookie applies unchanged; a planted
+  guest cookie is a smaller prize than a planted session, but it is somebody else's
+  shopping.
+- **The cart does not reserve stock, and says so in three places.** Reservation is held
+  against a real order in Phase 7. A reserving cart lets anyone empty the shelves for
+  free and needs a sweeper to give it back.
+- **The wishlist requires an account.** A wishlist promises to remember across devices and
+  months; a guest cookie can keep neither half. Offering one signed-out would advertise a
+  durability the storage cannot provide.
+- **The claim is outside the transaction, the rest inside it.** The claim must be visible
+  to a concurrent caller immediately, which is exactly what a transaction prevents.
+- **A failed merge does not fail the sign-in.** The person proved who they are; the guest
+  cart stays unclaimed and the next attempt picks it up.
+
+### Deviations from the plan
+
+- **`__Host-` on `hae_cid`**, as above.
+- **`GUEST_COOKIE_SECRET` keys an HMAC rather than being a signature.** The plan said
+  "stored hashed"; keying it means the stored digest cannot be recomputed by anyone
+  holding only a database dump, which is the same argument as the OTP pepper.
+- **Guest orders are a placeholder.** `claimGuestOrders` logs and returns. The Order model
+  does not exist until Phase 7, and the hook is in place so it cannot be forgotten.
+
+### Two defects found by running it rather than reading it
+
+Both were in the same three lines, and both were invisible to the test suite because they
+were about *requests that should not have been made*.
+
+1. **The cart page asked for a merge report on every visit** — a 401 in the console for
+   every signed-out shopper, and a wasted round trip for every signed-in one to be told
+   "no" almost always. The `hae_merge` cookie exists because of this: the page now asks
+   only when the answer is yes, and a read that finds nothing clears the flag itself.
+2. **It asked twice.** The loading skeleton was an early `return`, so the whole tree below
+   it unmounted and remounted when the cart read settled — and the report panel's effect
+   runs on mount. The skeleton is now a branch inside the tree rather than in front of it.
+
+### Things worth knowing before Phase 7
+
+- **`markOrderPaid` should be the only function that moves money-state**, and the cart's
+  claim guard is the shape to copy: one guarded `findOneAndUpdate` whose `null` return
+  *is* the idempotency answer. The cart proves the pattern works under a replayed
+  delivery; the order state machine needs the same thing under a webhook delivered three
+  times, out of order, four hours late.
+- **Checkout re-prices from the cart's own `repriceCart`, not from the stored lines.** The
+  function already returns `sellableQuantity` and `needsAttention`; a checkout that reads
+  `quantity` instead would reserve stock that is not there.
+- **A line with `maxQuantity: 0` must block checkout**, not be silently dropped. The
+  frontend has `isBlocking` for exactly this and nothing consumes it yet.
+- **Reservation is the missing half.** `stock.available` is decremented nowhere in Phase 6;
+  the `arrayFilters` guard proven in Phase 0's probe is what Phase 7 reserves with.
+- **The webhook route must mount above `express.json()`** — the comment marking the spot
+  is already in `app.ts` and is load-bearing.
+- **`Cart.status` has an `ordered` value that nothing sets yet.** Checkout sets it, which
+  is what releases the partial unique index so the next cart can be created.
+- **The backend is still on vitest 2.1.8** while the frontend moved to 5 in Phase 1. Worth
+  closing before Phase 11's audit pass, and cheap now that the suites are large enough to
+  catch a regression in the runner.
+
+---
+
 ## Next action
 
-**Phase 6 — Cart & wishlist.** Guest identity, re-pricing reads, merge with a report,
-and the drawer with optimistic updates. Docs due: `CART`.
+**Phase 7 — Checkout.** Stripe + PayPal, `markOrderPaid`, the order state machine, stock
+reservation and its sweeper, outbox email. Docs due: `CHECKOUT`, `PAYMENTS`.
 
-The groundwork is laid and the shape is already decided in the plan's section 6:
+The plan's section 6 settles the shape, and three of its claims are now cheaper to make
+good on than they were:
 
-- **`hae_cid`**, 128-bit, `HttpOnly`, stored hashed, set lazily on **first add-to-cart**
-  — not on first page view, so casual browsers get no cookie. `GUEST_COOKIE_SECRET` is
-  already in the environment.
-- **Merge happens inside the verify transaction**, which means `auth.service.ts` gains a
-  hook rather than the cart polling for a sign-in. Rotate the sid there as well: the
-  guest-to-user upgrade is a privilege change.
-- **Carts live in MongoDB, not Redis** — the rule from ARCHITECTURE.md is that Redis must
-  be safe to flush at 3 a.m., and a lost cart is a lost sale.
-- The merge algorithm's branches (collision, missing variant, price drift, stock clamp,
-  out of stock) are named in the plan's section 11 as unit tests, and the report is what
-  the shopper is shown rather than a silent reconciliation.
-- `attachSession` already populates `req.auth` on every route, so a cart handler reads it
-  and treats absence as "guest" — no new middleware.
+- **The order status machine is enforced in the query filter, never in application `if`s.**
+  `findOneAndUpdate({_id, status: {$in: predecessorsOf(next)}})` returning `null` means the
+  transition was illegal — log it, return 200, do not retry. Phase 6's cart claim is the
+  same pattern, already exercised against a replayed delivery.
+- **`POST /checkout/session` re-prices from live data, reserves stock and inserts the
+  Order in one transaction**, then creates the PaymentIntent **outside** it with the
+  deterministic key `pi:{orderId}`. Never hold a transaction open across a third-party
+  HTTP call.
+- **The demo must not require the Stripe CLI.** The return page calls
+  `reconcileOrderWithProvider`, which funnels into the same `markOrderPaid` as the webhook.
+  Test that path with webhooks explicitly disabled.
+
+PayPal is the direct repair of the 2022 app's worst defect, and all five checks —
+status `COMPLETED`, `custom_id`, currency, exact minor-unit amount, capture status — are
+verified from the server's own response and never from the client.

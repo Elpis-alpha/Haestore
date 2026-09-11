@@ -16,3 +16,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [008](ADR-008-typed-attribute-values.md) | Attribute values as a typed array, not a Map | Accepted |
 | [009](ADR-009-one-listing-endpoint-that-degrades.md) | One listing endpoint, which degrades and says so | Accepted |
 | [010](ADR-010-roles-are-read-not-carried.md) | Roles read per request, never snapshotted into a session | Accepted |
+| [011](ADR-011-cart-merge-takes-max.md) | A quantity collision on merge takes MAX, not SUM | Accepted |
