@@ -308,17 +308,15 @@ render, and then bounce.
 - **No email change flow.** The address *is* the identity, and changing it is closer to
   merging two accounts than to editing a field. It belongs with orders, in Phase 7, where
   there is something to carry across.
-- **No admin UI for roles.** `ADMIN_EMAILS` bootstraps the first administrator at
-  verification time, which is what makes a fresh database yield a working admin with no
-  seeded password — replacing the 2022 app's shared `?item_password=` in the query string
-  of every mutating request. Granting a role to someone else is Phase 8's console.
-- **No step-up dialog in the frontend.** The mechanism is mounted and tested on real
-  routes, but the only things behind it are admin deletes, and the admin console arrives
-  in Phase 8. A dialog with nothing to guard is the disabled-button mistake.
+- ~~**No admin UI for roles.**~~ **Arrived in Phase 8.** `ADMIN_EMAILS` still bootstraps
+  the first administrator; the console grants and removes the role, behind step-up, and
+  either change ends all of that person's sessions. See ADMIN.md, "Customers".
+- ~~**No step-up dialog in the frontend.**~~ **Arrived in Phase 8**, with the console it
+  guards: `withStepUp` retries the action once after a verified code, and the page is never
+  left. See ADMIN.md, "Step-up, in a browser".
 
-## The known gap
+## The known gap — closed in Phase 8
 
-The admin `DELETE` routes are not in `openapi.json` — none of the admin delete surface
-was registered in Phase 2, and adding just these two would leave the document
-inconsistent about which mutations exist. Phase 8 needs them documented anyway, because
-that is when a frontend has to handle `STEP_UP_REQUIRED`, so they go in together.
+The admin `DELETE` routes were missing from `openapi.json`. Phase 8 registered the whole
+admin surface — 62 paths in all — and every route behind step-up documents its 403
+`STEP_UP_REQUIRED` answer, so the generated frontend types know it exists.

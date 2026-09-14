@@ -270,8 +270,9 @@ Against the running stack, with real Stripe and real PayPal sandbox credentials:
   reservation's expiry ends an abandoned checkout. A *denied PayPal capture* is different —
   the approval is spent — so that one does cancel.
 - **`GET /api/catalog/products/:slug` returns `_id`; the listing returns `id`.** A
-  pre-existing inconsistency, noticed while scripting the live run. Not touched in this
-  phase; worth settling in Phase 8.
+  pre-existing inconsistency, noticed while scripting the live run. **Settled in Phase 8,
+  by rule rather than rename:** a document returned whole keeps `_id`, a presenter's
+  projection uses `id`. See ADMIN.md.
 - **`PAYPAL_WEBHOOK_ID` is unset.** Without it the PayPal webhook route refuses events
   rather than trusting them unverified. Nothing in the demo depends on it — the return
   page reconciles through the same `markOrderPaid` — but it must be set before a real

@@ -236,14 +236,15 @@ Canonicalisation collapses the *spelling* variants; this keeps the combinatorial
   not part of this system, and that rule is the more recent and better-argued of the two.
   A moving band of text over a grain overlay is also close to unreadable.
 
-## The one gap
+## The one gap — closed in Phase 8
 
 A variant's `axisValues` carry the admin's raw slugs — `whole-bean`, not "Whole bean" —
-because the grid is built from values. Labels are recovered from the category endpoint,
-which returns each *filterable* attribute's options with labels and swatches, and an axis
-attribute is normally filterable too. Where it is not, `ProductView` falls back to
-prettifying the slug.
+because the grid is built from values. Phase 4 recovered labels from the category endpoint,
+which returns only *filterable* attributes, so an axis that was not also a filter fell back
+to a prettified slug, and so did every non-filterable row of the specification table.
 
-Closing it properly is a backend change: either denormalise a label onto `axisValues`, or
-return the effective attribute set from the product endpoint. It belongs with the admin's
-variant grid work in Phase 8.
+Phase 8 closed it on the backend, at read time rather than by denormalising: the product
+endpoint returns `axes` — each axis with its label and its options' labels and swatches —
+and a `label` on every attribute, both taken from the effective attribute set the route had
+already loaded and cached. The product page no longer calls the category endpoint at all.
+A slug is prettified only for an attribute that no longer applies to the product's category.

@@ -69,6 +69,8 @@ Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)*
 | [AUTH](docs/AUTH.md) | Passwordless OTP and opaque Redis sessions |
 | [CART](docs/CART.md) | Guest identity, re-pricing, and the sign-in merge |
 | [CHECKOUT](docs/CHECKOUT.md) | Order state machine, Stripe, PayPal, idempotency |
+| [PAYMENTS](docs/PAYMENTS.md) | The five PayPal checks, Stripe's signature, and the 2022 defect they repair |
+| [ADMIN](docs/ADMIN.md) | The console: one gate, step-up, orders, the attribute builder, the storefront composer |
 | [DESIGN-SYSTEM](docs/DESIGN-SYSTEM.md) | Palette, type, the arch and leaf motifs, motion |
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | Cloudflare Workers and the API container |
 | [decisions/](docs/decisions/) | ADRs — the contested forks and why they went the way they did |

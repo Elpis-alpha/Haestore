@@ -154,6 +154,39 @@ still sells. They are stripped from every public response.
 
 ---
 
+## StorefrontLayout
+
+`storefront_layouts`. One document per **version** of a composed page, never edited once
+published. See ADMIN.md, "The storefront composer".
+
+| Field | |
+|---|---|
+| `handle` | Which page. Only `home` today. |
+| `version` | Monotonic per handle. |
+| `status` | `draft`, `published` or `retired`. |
+| `sections` | `Mixed` — a discriminated union Mongoose cannot express, validated by Zod on every write. References to products and categories are ids, resolved at read time. |
+| `revision` | Bumped on each draft save; a save carrying a stale one is refused. |
+
+| Index | For |
+|---|---|
+| `{ handle, version }` unique | addressing a version |
+| `{ handle, status }` unique, partial on `status ∈ {draft, published}` | **at most one draft and one live version per page**, enforced by the database |
+
+## AdminAudit
+
+`admin_audit`. One row per admin mutation that succeeded: actor, method, the declared route
+pattern, target id, status, request id, time. No body and no diff, and no TTL.
+
+Indexes: `{ at }` for the log, `{ targetId, at }` for one record's history,
+`{ actor.userId, at }` for one admin's.
+
+## Order, for the console
+
+Phase 8 added one index: `{ status, createdAt }`, for the admin order list filtered by
+status and the dashboard's counts.
+
+---
+
 ## Rules every list endpoint follows
 
 A **mandatory projection**, a **default page size of 24** and a **maximum of 60**, and

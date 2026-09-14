@@ -16,8 +16,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 5 | Auth | ✅ Complete |
 | 6 | Cart & wishlist | ✅ Complete |
 | 7 | Checkout | ✅ Complete |
-| 8 | Admin console | 🟡 Next |
-| 9 | Reviews, support, polish | ⬜ Not started |
+| 8 | Admin console | ✅ Complete |
+| 9 | Reviews, support, polish | 🟡 Next |
 | 10 | Seed & docs | ⬜ Not started |
 | 11 | Deploy | ⬜ Not started |
 
@@ -973,24 +973,173 @@ Against the running stack, with real Stripe test keys and real PayPal sandbox cr
 
 ---
 
+## Phase 8 — Admin console
+
+**Goal:** the attribute builder, the storefront composer with versioning, and the order and
+customer surfaces — the phase that made the admin API, answering 401 since Phase 2, usable.
+
+Full write-up: **[ADMIN.md](ADMIN.md)**. New decision:
+**[ADR-013](decisions/ADR-013-refunds-are-recorded-not-issued.md)**.
+
+### Done
+
+- **One admin router** (`modules/admin/admin.routes.ts`) with `requireRole('admin')` and the
+  **audit middleware** mounted once above every admin router. The gate moved up from the
+  catalogue router, where Phase 2 put it.
+- **`admin_audit`** — one row per successful mutation: actor, declared route pattern, target,
+  status, request id. Written on `finish`, never for a refused request, no TTL.
+- **Orders:** list with status filter and a search that takes an order number read down a
+  phone or the start of an email; detail with the provider's record and history; actions
+  **derived from the status machine** and returned by the server. `shipOrder` consumes stock
+  in the same guarded write and transaction as the status; cancel is narrowed to unpaid
+  orders in the query filter; refunds are recorded (ADR-013); reconcile is a button.
+- **Customers:** list with orders and money kept per currency; sign out everywhere; grant and
+  remove `admin` behind step-up, ending the person's sessions either way.
+- **The catalogue console:** the attribute builder with a live preview of the attribute as a
+  shopper meets it; the category editor showing inheritance, with bind, hide-here and
+  set-here; a product form **generated from the category's effective attribute set**, with
+  the variant grid planned in the browser and saved through the one write pipeline.
+- **The storefront composer:** `storefront_layouts` versions (draft / published / retired),
+  a partial unique index making one draft and one live version per page a database fact,
+  retire-then-promote publishing in a transaction, revision-guarded draft saves, rollback by
+  republishing, references resolved at read time with preview warnings, same-site-only links,
+  and a guarded server action that revalidates the front page on publish. **The home page is
+  now rendered from the published layout**; the built-in default reproduces the Phase 4 page.
+- **The dashboard**, written as sentences: orders to pack, payments that look stranded,
+  products needing attention, stock running low, money taken, the front page's version.
+- **Step-up in the browser:** `withStepUp` retries an action exactly once after a verified
+  code, from a dialog that never leaves the page.
+- **`openapi.json` — 62 paths, 38 schemas** (39 and 23), the whole admin surface included,
+  every step-up route documenting its 403. `schema.d.ts` regenerated.
+- **Phase 7's notes paid off:** the admin `DELETE` routes are documented, `consumeAll` and
+  `reconcileOrderWithProvider` have their callers, and the `_id`/`id` question is settled by
+  rule. **FRONTEND.md's "one gap" is closed:** the product endpoint returns `axes` with labels
+  and swatches and a `label` on every attribute.
+
+### Verified, not assumed
+
+**Backend: 322 unit + 220 integration** (297 + 165 before). **Frontend: 142** (108 before).
+
+- **The gate test walks the router's own route table** — 40-odd routes, 401 to a stranger and
+  404 to a shopper on every one — and fails if a router is mounted that it cannot walk.
+- **Two admins shipping one order at once ship once**, and `onHand` comes down once.
+- **Two admins publishing one draft at once produce one live version**, and a second published
+  version inserted directly is refused with E11000.
+
+Against the running stack, in a real browser, signed in with a real code:
+
+- **The adaptable claim, from the admin side.** A `varietal` attribute, named nowhere in
+  either codebase, was defined in the builder, bound to Beans and set on one product. Its
+  facet appeared on `/shop/coffee-tea/beans` with disjunctive counts — Bourbon 1, Typica 0,
+  Geisha 0, shown rather than hidden — and `?varietal=bourbon` narrowed the shelf to that
+  product.
+- **Pack and ship** moved Espresso House Blend from `onHand 8, reserved 5` to `6, 3` with
+  `available` untouched, and wrote two audit rows naming the admin.
+- **Step-up end to end:** the session's `authAt` was aged thirteen hours in Redis, a refund was
+  recorded, the dialog appeared, the code from the outbox was entered, and the refund went
+  through on the retry with the same session — `refunded`, the note in its history, the two
+  held units back on the shelf.
+- **The composer:** the front page went from the built-in default to version 1, to version 2,
+  and back to version 1 on rollback, each visible on `/` immediately.
+- **A signed-in shopper gets 404** on `/admin`, `/admin/orders` and `/admin/storefront`, and on
+  `/api/admin/dashboard`.
+- **No horizontal scroll at 375px** on fourteen console and storefront pages.
+- `cf:build` dry-run: **1325 KiB gzipped** against the 3 MiB limit (1155 KiB at Phase 7 — the
+  whole console, composer and builder included, cost about 170 KiB). `/` is still
+  statically prerendered, with its 300-second revalidate.
+
+### Decisions taken during implementation
+
+- **ADR-013 — refunds are recorded, not issued.** A refund button would be a fourth kind of
+  Stripe call (ADR-012's own reversal condition) and needs the checkout's four guards pointed
+  the other way. That is its own piece of work, not a corner of an admin phase.
+- **Cancel only before money moves**, narrowed in the query filter through `transition`'s new
+  `from` option, because canceling a paid order would release the stock and keep the money.
+- **The gate and the audit moved to one parent router**, and the test walks it.
+- **Role changes end the person's sessions in both directions.** For a grant, that is the
+  session-fixation rotation the plan asks for, performed on a browser the admin does not hold.
+- **The variant grid is planned client-side** and saved through `updateProduct`; the console
+  never calls the generate route.
+- **Storefront references resolve at read time** rather than copying cards into a version,
+  which would freeze prices on the front page.
+- **One index enforces both "one draft" and "one live version"** — `{handle, status}` unique
+  over `status ∈ {draft, published}` — and its per-write checking fixes the retire-then-promote
+  order.
+- **`_id` for a document returned whole, `id` for a presenter's projection.**
+- **The site header stays above the console.**
+
+### Deviations from the plan
+
+- **No review moderation or support inbox yet.** The plan puts both surfaces here and their
+  models in Phase 9. A screen with nothing behind it is the disabled-button mistake, so both
+  move to Phase 9 with their models.
+- **Refunds are recorded, not issued** (ADR-013).
+- **No image upload.** Photographs are Cloudinary public ids typed into the product form; the
+  signed direct upload belongs with the Phase 10 seed, which is the first real uploader.
+
+### Five defects found by building it
+
+1. **Every catalogue PATCH reset the fields it did not mention.** `createSchema.partial()` keeps
+   each field's `.default()` in Zod 4, so `PATCH { title }` parsed to a product set back to
+   draft with its attributes, variants and images emptied — a 200. Shipped in Phase 2, invisible
+   until the console sent the first partial body. `lib/zod-patch.ts` strips the defaults; each
+   schema has a test.
+2. **Generating a variant grid bypassed the write pipeline** — no outbox row, no recomputed
+   price range, no `available` maintained, so generated variants were unindexed and unsellable.
+   Now through `updateProduct`, with a regression test.
+3. **The attribute builder's address-bar preview could never show the key**: the prop was named
+   `key`, which React reserves. Found in the browser console.
+4. **Two console pages scrolled sideways at 375px** despite `overflow-x-auto` around their
+   tables: Radix checkboxes render an absolutely positioned hidden input, which an overflow box
+   only clips if it is the containing block. Found by measuring every ancestor after the first
+   fix changed nothing.
+5. **The state machine has no `paid → shipped` edge**, and the first draft of the console
+   offered one. The derived-actions test caught it; the machine was right.
+
+Also fixed on inspection: `/admin` alone was titled "· Hæstore", because a layout's title
+template does not apply to the page in its own segment.
+
+### Things worth knowing before Phase 9
+
+- **Review moderation and the support inbox go in the console Phase 8 built.** Mount their
+  routers under `adminRouter` and they are gated, audited and covered by the route-walking test
+  without touching any of those. Add a line to the nav in `components/admin/admin-nav.tsx`.
+- **The dashboard is the place for "reviews waiting" and "tickets waiting"** — add them as
+  daybook lines in `dashboardSummary`, a count and the oldest few.
+- **Verified-purchase reviews need an order that reached `delivered`** — which is now a button,
+  so the live run can produce one without mongosh.
+- **`Product.ratingAverage` and `ratingCount` exist and nothing writes them.** Reviews do, and
+  they are listing fields, so a review write needs an outbox row like any product write.
+- **Stock `onHand` can in principle be driven below zero** by `consumeAll` if an admin lowers
+  `onHand` beneath what orders already hold: `$inc` does not run the schema's `min: 0`. Worth a
+  guard and a test before anyone depends on the number.
+- **On Cloudflare, publish-time revalidation needs the incremental cache** Phase 11 configures;
+  until then a published version shows within the page's five-minute window.
+- **The backend is still on vitest 2.1.8.** The Phase 6 note stands.
+- **Run the stack for a browser check with `MAIL_DRIVER=console`** and a test address in
+  `ADMIN_EMAILS`: the real `.env` sends codes to a real inbox.
+
+---
+
 ## Next action
 
-**Phase 8 — Admin console.** The attribute builder, the storefront composer with
-versioning, and the order, customer and review surfaces. Docs due: `ADMIN`.
+**Phase 9 — Reviews, support, polish.** Verified-purchase reviews and ratings, support ticket
+threads, SEO/OG/sitemap, and an accessibility and reduced-motion audit. The plan lists no new
+doc for this phase; the review and support sections go into ADMIN.md and a new write-up is
+worth adding if the ticket model earns one.
 
-Three things are already waiting for it:
+What is already waiting:
 
-- **The admin API has been answering 401 since Phase 2** and the `DELETE` routes with
-  step-up are still absent from `openapi.json`. Phase 5 deferred that to "when a frontend
-  has to handle `STEP_UP_REQUIRED`" — this is that phase.
-- **The order side of the state machine is built and unused.** `transition`, `cancelOrder`
-  and `consumeAll` are tested and nothing calls them. "Mark shipped" is where `consumeAll`
-  belongs, and it is the only place `onHand` moves outside an admin correction.
-- **`reconcileOrderWithProvider` wants an admin button.** It is the repair path for an
-  order stranded by a lost webhook, it is idempotent, and it already runs the same five
-  PayPal checks as the capture.
+- **The console to put them in.** A router mounted under `adminRouter` is gated, audited and
+  covered by the route-walking gate test by existing. The moderation and inbox screens Phase 8
+  deferred belong there, with their models.
+- **A delivered order is a button now**, so a verified-purchase review can be produced in a
+  live run: pack, ship and deliver an order from `/admin/orders`, then review its product as
+  the customer.
+- **`ratingAverage` / `ratingCount`** are on the product and the listing card and written by
+  nothing. A review write has to update them in a transaction with an outbox row.
+- **The `onHand` floor** noted above deserves its guard while the stock code is being touched.
 
-The storefront composer is the part with a genuine design question in it: publishing is a
-version insert plus a status flip in one transaction, never an in-place edit, with a
-partial unique index guaranteeing exactly one published version per handle — so rollback
-is `publish(handle, n-1)` and the homepage is never half-updated.
+The polish half has one sharp edge worth deciding early: a sitemap must list only what a
+crawler should index, which is shelves and products — never the filter combinations FRONTEND.md
+already marks `noindex`.
