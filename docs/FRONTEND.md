@@ -217,6 +217,33 @@ query. So `generateMetadata` sets `robots.index: false` when filters or a query 
 present, and always emits `alternates.canonical` pointing at the canonical URL.
 Canonicalisation collapses the *spelling* variants; this keeps the combinatorial ones out.
 
+### What Phase 9 added
+
+- **`/sitemap.xml`** lists the home page, `/shop`, `/support`, every live shelf and every live
+  product — and nothing combinatorial, because a sitemap is the one document where the shop
+  says which URLs matter, and listing a `noindex` page there contradicts its own meta tag. The
+  API's `/api/catalog/sitemap` can only return live shelves and products, so the file cannot
+  drift into listing anything else. Revalidated hourly; read softly, so an API outage at
+  generation time is a short sitemap rather than a 500 a search engine remembers.
+- **`/robots.txt`** disallows only what has nothing public in it — `/api/`, `/admin`,
+  `/account`, `/checkout`. The sign-in page, the bag and filtered shelves stay crawlable and say
+  `noindex` themselves: a disallowed URL is never fetched, so its `noindex` is never read, and a
+  page linked from every header could then be indexed from its links alone.
+- **Structured data on the product page** — a `Product` with an `Offer` (one variant) or
+  `AggregateOffer` (several, active variants only), an `aggregateRating` only when there are
+  reviews, up to five reviews, and a `BreadcrumbList`. It is emitted through
+  `serializeJsonLd`, which escapes `<`, `>`, `&`, U+2028 and U+2029: the block holds text that
+  customers wrote, and `JSON.stringify` alone lets a review containing `</script>` end the
+  element. Verified live with exactly that headline — the raw block contains no `<script`, and
+  parses back to the original text.
+- **A default Open Graph card** at `public/og/haestore.png`, 1200×630, rendered once from HTML
+  in the brand's own type and committed as a file. `opengraph-image.tsx` would ship an image
+  renderer in the Worker bundle to draw a picture that never changes. A page that sets its own
+  `openGraph` replaces the layout's whole object, so the product page names the card again for
+  a product with no photograph. `twitter:card` is `summary_large_image` site-wide.
+- `NEXT_PUBLIC_SITE_URL` is read in one place, `lib/seo/site.ts`, alongside the layout's
+  `metadataBase`, so canonical links, the sitemap and the structured data agree about the host.
+
 ---
 
 ## What is deliberately not here

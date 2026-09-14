@@ -71,6 +71,8 @@ Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)*
 | [CHECKOUT](docs/CHECKOUT.md) | Order state machine, Stripe, PayPal, idempotency |
 | [PAYMENTS](docs/PAYMENTS.md) | The five PayPal checks, Stripe's signature, and the 2022 defect they repair |
 | [ADMIN](docs/ADMIN.md) | The console: one gate, step-up, orders, the attribute builder, the storefront composer |
+| [REVIEWS-AND-SUPPORT](docs/REVIEWS-AND-SUPPORT.md) | Verified-purchase reviews, moderation after publishing, and support conversations |
+| [ACCESSIBILITY](docs/ACCESSIBILITY.md) | The Phase 9 audit: what was measured, what it found, and what was fixed |
 | [DESIGN-SYSTEM](docs/DESIGN-SYSTEM.md) | Palette, type, the arch and leaf motifs, motion |
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | Cloudflare Workers and the API container |
 | [decisions/](docs/decisions/) | ADRs — the contested forks and why they went the way they did |

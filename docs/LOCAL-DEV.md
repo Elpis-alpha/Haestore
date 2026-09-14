@@ -105,6 +105,30 @@ db.orders.updateOne({ orderNumber: 'HAE-XXXXXXXX' },
 
 The sweeper runs every `ORDER_SWEEP_INTERVAL_MS` (60s).
 
+## Reviews and support locally
+
+**A review needs a delivered order**, and a delivered order is three buttons: open any paid
+order at `/admin/orders`, then *Start packing*, *Mark shipped*, *Mark delivered*. Sign in as the
+order's customer and it is waiting at `/account/reviews`, or from the order's own page. The
+product page caches its reviews for a minute, like the product; the API
+(`/api/catalog/products/<slug>/reviews`) shows a new review at once, and the listing card's
+rating follows through the search relay within seconds.
+
+**A support reply's email is sent by the order worker's sweep**, not at the moment of the reply,
+so with the default `ORDER_SWEEP_INTERVAL_MS` of a minute it can take that long to appear at
+`/api/dev/outbox`. For a live run, start the API with a short interval:
+
+```bash
+MAIL_DRIVER=console ADMIN_EMAILS=keeper@haestore.test ORDER_SWEEP_INTERVAL_MS=5000 \
+  back-end/node_modules/.bin/tsx back-end/src/server.ts
+```
+
+The overrides matter as much as the interval. `back-end/.env` may set `MAIL_DRIVER=gmail-api`
+and a real address in `ADMIN_EMAILS`, and a live run then emails sign-in codes and replies to a
+real inbox. Values set on the command line win over `.env`.
+
+---
+
 ## The MongoDB replica set
 
 `mongod` runs with `--replSet rs0` and self-initiates via its healthcheck. This is

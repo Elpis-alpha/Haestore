@@ -225,9 +225,12 @@ Either both land or neither does.
 
 Unlike the search outbox this one is **swept, not streamed** — no change stream, no resume
 token, no second lease. Nobody notices a receipt three seconds late, and order volume is
-orders of magnitude below catalogue-write volume. The post-commit enqueue is an
-optimisation that is free to fail, because the row is already durable; the sweep is what
-makes delivery certain.
+orders of magnitude below catalogue-write volume. The sweep is what makes delivery certain,
+and today it is also the only path: `enqueueOrderMail` — the post-commit fast path this
+section used to describe — exists in `order-jobs.ts` and has no caller, so a receipt goes
+out on the next sweep, within `ORDER_SWEEP_INTERVAL_MS` (a minute). Found in Phase 9 while
+routing support replies through the same outbox; the sweep's latency is acceptable for mail,
+so the fast path was left unwired rather than added under a phase about something else.
 
 ---
 

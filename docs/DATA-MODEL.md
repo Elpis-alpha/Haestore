@@ -1,7 +1,7 @@
 # Data model
 
-Collections as they exist after Phase 2. Cart, Order, User, Review, Wishlist,
-SupportTicket and StorefrontLayout arrive in later phases and are described in the plan.
+Collections as they exist after Phase 9. The catalogue is described in full; the collections
+later phases added are summarised near the end, with the documents that explain them.
 
 Companion documents: [ADAPTABLE-CATALOG.md](ADAPTABLE-CATALOG.md) for how the attribute
 system behaves, [ADR-005](decisions/ADR-005-embedded-variants.md) for embedded variants,
@@ -184,6 +184,69 @@ Indexes: `{ at }` for the log, `{ targetId, at }` for one record's history,
 
 Phase 8 added one index: `{ status, createdAt }`, for the admin order list filtered by
 status and the dashboard's counts.
+
+## Review
+
+`reviews`. One per person per product, and only from an order that reached `delivered`. See
+[REVIEWS-AND-SUPPORT.md](REVIEWS-AND-SUPPORT.md).
+
+| Field | |
+|---|---|
+| `product`, `user` | Unique together — a second review from the same person replaces the first. |
+| `order` | **Required.** The earliest of the person's orders for the product whose history reached `delivered`. |
+| `rating` | Integer 1–5. |
+| `title?`, `body?` | Optional; a rating with no words is a review. |
+| `authorName` | "Ada L.", rendered at write time. Never an email address, never a whole name. |
+| `purchased[]` | The variant's axis values, copied from the order line. |
+| `status` | `published` or `hidden` — visibility, and the only thing the average reads. |
+| `needsReview` | The moderation queue. True on every write by the author, false once someone in the shop has read it. |
+| `moderation?` | `{ by, at, note }` while hidden. The note is shown to the author. |
+| `editedAt?` | Set on every rewrite. |
+
+| Index | For |
+|---|---|
+| `{ product, user }` unique | one review per person per product |
+| `{ product, status, createdAt, _id }` | the product page's list |
+| `{ product, status, rating }` | the per-star grouping behind the average and the distribution |
+| `{ user, createdAt }` | the account's own reviews |
+| `{ needsReview, createdAt }` partial | the moderation queue and the dashboard's count |
+| `{ status, createdAt }` | the console's hidden and all-reviews lists |
+
+**`Product.ratingAverage` and `ratingCount` are written by reviews**, recomputed from the
+per-star counts inside the transaction that changed a review, with a search outbox row in the
+same transaction. They were on the product and the listing card from Phase 2 and written by
+nothing until Phase 9.
+
+## SupportTicket
+
+`support_tickets`. A conversation between a signed-in customer and the shop — ADR-014 for why
+it needs an account.
+
+| Field | |
+|---|---|
+| `reference` | `SUP-` and six Crockford characters, unique. What the customer quotes. |
+| `user`, `email` | The account, and the proven address replies are sent to. |
+| `subject` | |
+| `order?`, `orderNumber?` | One of the customer's own orders, if they named one. |
+| `status` | Who owes the next message: `open` (the shop), `answered` (the shop replied last), `closed`. |
+| `messages[]` | Embedded, **capped at 100** in the write's filter. `{ _id, from, staff?, staffEmail?, body, at }`. |
+| `lastMessageAt` | Sorts both inboxes. |
+| `customerReadAt?` | When the customer last opened it, for "New reply". |
+| `closedAt?`, `closedBy?` | |
+
+| Index | For |
+|---|---|
+| `{ reference }` unique | addressing a conversation |
+| `{ user, lastMessageAt }` | the customer's list |
+| `{ user, status }` | the open-conversation limit |
+| `{ status, lastMessageAt }` | the inbox, longest-waiting first |
+| `{ email, lastMessageAt }` | the console's search by address prefix |
+
+## The mail outbox
+
+`order_outbox` gained a third kind, `support-reply`, carrying `ticket` and `messageId` instead
+of `order`. It is committed in the transaction that saves a reply from the shop and delivered
+by the same sweep as receipts. `order` is required for the two order kinds and only for them.
 
 ---
 

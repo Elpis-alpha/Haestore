@@ -17,8 +17,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 6 | Cart & wishlist | ✅ Complete |
 | 7 | Checkout | ✅ Complete |
 | 8 | Admin console | ✅ Complete |
-| 9 | Reviews, support, polish | 🟡 Next |
-| 10 | Seed & docs | ⬜ Not started |
+| 9 | Reviews, support, polish | ✅ Complete |
+| 10 | Seed & docs | 🟡 Next |
 | 11 | Deploy | ⬜ Not started |
 
 ---
@@ -1121,25 +1121,172 @@ template does not apply to the page in its own segment.
 
 ---
 
+## Phase 9 — Reviews, support, polish
+
+**Goal:** verified-purchase reviews and ratings, support conversations, SEO and structured
+data, and an accessibility and reduced-motion audit of the assembled shop.
+
+Full write-ups: **[REVIEWS-AND-SUPPORT.md](REVIEWS-AND-SUPPORT.md)** and
+**[ACCESSIBILITY.md](ACCESSIBILITY.md)**; FRONTEND.md's "Indexing" gained what Phase 9 added.
+New decision: **[ADR-014](decisions/ADR-014-support-needs-an-account.md)**.
+
+### Done
+
+- **Reviews** — `Review.order` required, found on the server as the earliest of the person's
+  orders whose *history* reached `delivered` (so a return after delivery still counts). One per
+  person per product, as a unique index, written by `PUT /api/reviews/products/:id`. Bylines are
+  "Ada L.", rendered at write time.
+- **The rating is derived, in the transaction.** Every write that changes what the public sees
+  goes through `withRatingRefresh`: group the published reviews by star, set `ratingAverage` and
+  `ratingCount` on the product, append a search outbox row. The Phase 2 fields finally have a
+  writer, and the listing card and index follow within seconds.
+- **Moderation after publishing** — `status` (visibility) and `needsReview` (the queue) as two
+  facts. Read, hide with a note the author sees, restore; an edit to a hidden review returns to
+  the queue still hidden.
+- **Support conversations** — `SUP-XXXXXX` references, embedded messages capped at 100 in the
+  filter, status named for who owes the next message, ownership scoped in every query, the
+  customer's own orders attachable. **An account is required** (ADR-014).
+- **The reply email through the mail outbox** — a `support-reply` kind in `order_outbox`,
+  committed with the reply and naming the message.
+- **Account pages** — `/account/reviews` (what can be reviewed, what was written, `?write=`
+  opens a dialog), `/account/support`, a new-conversation form offering the person's orders, a
+  thread page; "Review it" and "Ask us about this order" on a delivered order.
+- **Console pages** — `/admin/reviews`, `/admin/support` (longest-waiting first) and a
+  conversation page, two new nav entries, and two daybook lines on the dashboard.
+- **The product page** reads its first page of reviews with the product and renders them into
+  the HTML, with a distribution beside the average; sort and "more" fetch from the browser.
+- **SEO** — `/sitemap.xml` (live shelves and products only, from a new `/api/catalog/sitemap`),
+  `/robots.txt`, product and breadcrumb **JSON-LD through an escaping serialiser**, a default
+  Open Graph card as a static file, `summary_large_image` site-wide, and a public `/support` page.
+- **The `onHand` floor** Phase 8 asked for: `consumeAll`'s decrement now only matches when the
+  shelf and the hold can afford it, and a shortfall floors at zero and is reported.
+- **`openapi.json` — 79 paths, 48 schemas** (62 and 38). `schema.d.ts` regenerated, and a fresh
+  generation matches the committed document byte for byte.
+
+### Verified, not assumed
+
+**Backend: 340 unit + 249 integration** (322 + 220 before). **Frontend: 156** (142 before).
+
+**Five guards were checked by breaking them** — a script mutated each on a copy, ran its suite,
+confirmed it went red and restored the file: the `delivered` eligibility filter (2 failures), the
+product write in the rating refresh (7), the message cap in the filter (1), a conversation's
+owner scoping (1), and the `consumeAll` floor (2). All 28 passed again once restored.
+
+Concurrency is tested rather than argued: **two first reviews on one product at once both
+count**, and the **same person saving twice at once ends with one review**.
+
+Against the running stack, in a real browser, with codes read from the dev outbox:
+
+- **The whole review path.** An order was packed, shipped and delivered from the console; the
+  customer followed "Review it" from the order, the dialog opened on arrival, and the review
+  was published. `/api/catalog/products?q=espresso` carried `ratingCount: 1` moments later,
+  through the relay.
+- **The JSON-LD escape, with a hostile headline.** The review's title was
+  `Holds its crema </script><script>alert(1)</script>`. The product page's raw JSON-LD block
+  contains no `<script`, and parses back to the exact title.
+- **Moderation.** An empty note was refused; with one, the public count went to 0, the audit log
+  recorded the hide, the author's page showed "Hidden by the shop" with the note, and restoring
+  brought the average back to 4.
+- **The support loop.** A conversation opened from the order arrived with it attached; the
+  dashboard said "1 person is waiting on a reply"; the admin's reply was **emailed through the
+  sweep 1.2 seconds after the button** with subject `Re: Bag arrived split [SUP-CMAEN5]`; the
+  customer's list showed "New reply", which cleared on opening, and their thread said "Hæstore"
+  with no admin address anywhere in it.
+- **The accessibility audit** — axe-core on thirty pages signed out, as a customer and as an
+  admin, one dialog open, 375px, keyboard and reduced motion. **The console had zero violations
+  on all twelve pages.** What it found is below; every item was fixed and re-measured.
+- **`/robots.txt`, `/sitemap.xml`** and the Open Graph and Twitter tags served as intended.
+- `cf:build` dry-run: **1498.79 KiB gzipped** against the 3 MiB limit (1325 KiB at Phase 8).
+  `/` is still statically prerendered, and so are `/support`, `/robots.txt` and `/sitemap.xml`.
+
+### Decisions taken during implementation
+
+- **ADR-014 — support needs an account.** An anonymous contact form would make the shop's
+  sender write to any address anyone typed, and need a second credential to read a thread.
+- **Reviews publish first and are read after.** The purchase is the spam defence, and approving
+  reviews before anyone can read them is the shop choosing its own average.
+- **The average is re-derived from per-star counts**, never folded into a running figure, which
+  drifts on every re-round and cannot take a hidden review back out.
+- **No "Write a review" button on the product page.** It is cached and cannot know who is
+  looking, and almost nobody looking can review. The way in is the account, where every item
+  offered can be.
+- **Reply notifications live in the order outbox** rather than a second collection with its own
+  sweep and TTL.
+- **Shipping below the shelf count floors rather than refuses.** The parcel has left; a
+  bookkeeping error must not block fulfilment, and must not lock the admin out of the product.
+- **A static Open Graph card**, not `opengraph-image.tsx`, which would put an image renderer in
+  the Worker for a picture that never changes.
+- **Robots disallows only what has nothing public in it**; the rest say `noindex` themselves,
+  because a disallowed page's `noindex` is never read.
+
+### Deviations from the plan
+
+- **Moderation is a read queue, not an approval step.** The plan did not specify one; Phase 8's
+  "reviews waiting" implied it. See above.
+- **The plan's end-to-end Playwright suite still does not exist.** The audit and the live run
+  drove a real browser by script, but nothing is committed as a test. It belongs with Phase 10,
+  whose seed gives it data to run against.
+- **The backend is still on vitest 2.** The Phase 6 note stands a fourth phase.
+
+### Defects found by building and auditing it
+
+1. **Closing any dialog dropped keyboard focus on `<body>`** — the bag since Phase 6, every
+   console dialog since Phase 8. Radix returns focus only to a `Dialog.Trigger`, and nearly every
+   dialog here is opened by a plain button. Fixed once in `DialogContent` and `DrawerContent`.
+2. **A zero-count filter value measured 3.48:1.** The row faded to 45%; its words now take the
+   faint ink, which the token tests hold at 4.5:1.
+3. **Two navigations named "Shelves"** — the header's and the footer's.
+4. **The specimen sheet failed its own subject** — unlabelled inputs, empty table headers, and a
+   second banner landmark.
+5. **The mail fast path CHECKOUT.md described had no caller.** `enqueueOrderMail` exists and
+   nothing calls it; receipts have always gone out on the sweep. The documentation now says so,
+   and it was left unwired rather than added under a phase about something else.
+6. **A cached product response from before Phase 8's contract crashed the product page once** in
+   development — no `axes`, `filters is not iterable`, a 500 — until it revalidated. Harmless
+   locally; on Cloudflare the incremental cache outlives a deploy, which is a Phase 11 concern.
+
+One **false alarm**, recorded in ACCESSIBILITY.md so it is not chased again: Playwright's
+`press` releases a key before Radix's deferred focus lands, which looked like arrow keys not
+selecting a star. Held for ninety milliseconds, as a person holds them, they select every time.
+
+### Things worth knowing before Phase 10
+
+- **Seeded reviews must come from delivered orders**, or the seed will write reviews the API
+  would refuse. Seed orders with a `history` that reaches `delivered`, then write reviews through
+  `writeReview`, so the rating and the index are maintained the way they are in production.
+- **The `rating` sort orders one five-star review above two hundred at 4.9.** A Bayesian average
+  is worth deciding once the seed makes the difference visible.
+- **The end-to-end suite should hold keys** rather than `press` them when driving Radix
+  controls, and read sign-in codes from `/api/dev/outbox` with the API started with
+  `MAIL_DRIVER=console` (LOCAL-DEV.md, "Reviews and support locally").
+- **Neither reviews nor conversations take photographs.** The signed upload the seed builds is
+  the first path that could.
+- **The README's quick start names `npm --prefix back-end run seed`**, and its documentation
+  table names DEPLOYMENT and MIGRATION — none of which exist yet. Phase 10 is where the first and
+  last become true.
+- **The Worker grew 174 KiB in this phase**, the largest jump of any. Worth knowing what grew
+  before Phase 11 measures against the limit for real.
+- **Clear `front-end/.next` after an API contract change** when a local page behaves oddly; the
+  development cache will serve responses and renders from before it.
+
+---
+
 ## Next action
 
-**Phase 9 — Reviews, support, polish.** Verified-purchase reviews and ratings, support ticket
-threads, SEO/OG/sitemap, and an accessibility and reduced-motion audit. The plan lists no new
-doc for this phase; the review and support sections go into ADMIN.md and a new write-up is
-worth adding if the ticket model earns one.
+**Phase 10 — Seed & docs.** Unsplash-to-Cloudinary seeding, a full documentation pass, and
+screenshots. New docs: `SEEDING` and `MIGRATION-FROM-ADAPTABLE-STORES`.
 
 What is already waiting:
 
-- **The console to put them in.** A router mounted under `adminRouter` is gated, audited and
-  covered by the route-walking gate test by existing. The moderation and inbox screens Phase 8
-  deferred belong there, with their models.
-- **A delivered order is a button now**, so a verified-purchase review can be produced in a
-  live run: pack, ship and deliver an order from `/admin/orders`, then review its product as
-  the customer.
-- **`ratingAverage` / `ratingCount`** are on the product and the listing card and written by
-  nothing. A review write has to update them in a transaction with an outbox row.
-- **The `onHand` floor** noted above deserves its guard while the stock code is being touched.
-
-The polish half has one sharp edge worth deciding early: a sitemap must list only what a
-crawler should index, which is shelves and products — never the filter combinations FRONTEND.md
-already marks `noindex`.
+- **A catalogue to seed into, and every write path to seed through.** Categories, attribute
+  definitions, products and variants through their services, so derived fields, validation
+  issues and outbox rows are produced the way production produces them; delivered orders and
+  reviews the same way (see "Things worth knowing" above).
+- **Deliberately dissimilar attributes per shelf**, as the plan asks — coffee, ceramics,
+  apothecary — are what make the adaptable claim visible on a fresh clone.
+- **The signed Cloudinary upload** Phase 8 deferred belongs with the seed, which is its first
+  real user, and the Unsplash rules are not optional: ping `download_location` on use, store and
+  show attribution, and cache responses so a full seed never needs a fresh 50-an-hour quota.
+- **The end-to-end suite** the plan describes can be written against seeded data: browse, filter,
+  buy as a guest, sign in and merge, pay with webhooks disabled, deliver, review — and the admin
+  run that defines an attribute and watches its facet appear.

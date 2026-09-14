@@ -19,3 +19,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [011](ADR-011-cart-merge-takes-max.md) | A quantity collision on merge takes MAX, not SUM | Accepted |
 | [012](ADR-012-no-payment-sdks.md) | Payment providers reached with `fetch`, not their SDKs | Accepted |
 | [013](ADR-013-refunds-are-recorded-not-issued.md) | The console records refunds; it does not issue them | Accepted |
+| [014](ADR-014-support-needs-an-account.md) | Support conversations need an account; no anonymous contact form | Accepted |

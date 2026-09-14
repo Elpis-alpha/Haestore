@@ -305,11 +305,38 @@ skip it.
 
 ---
 
+## Reviews (Phase 9)
+
+`/admin/reviews` reads reviews **after** they are published — every review comes from a
+delivered order, so the purchase is the spam defence, and approving reviews before anyone can
+read them would be the shop choosing its own average. The page opens on the ones nobody has
+read, oldest first, as paper slips rather than table rows, because a review is a paragraph.
+
+Three actions, derived from the review's `status` and `needsReview`: **Read** (out of the queue,
+nothing public changes), **Hide** (off the page and out of the average, with a note the author
+sees on their account) and **Restore**. None is behind step-up — each is reversible — and a
+refused one is a 409 carrying the review's current state, so the console reloads. An author's
+edit to a hidden review puts it back in the queue still hidden. The whole design is in
+[REVIEWS-AND-SUPPORT.md](REVIEWS-AND-SUPPORT.md).
+
+## Support (Phase 9)
+
+`/admin/support` opens on conversations that need a reply, longest-waiting first, with search by
+reference or the start of an address across every status. A conversation page is the thread,
+the reply box — with "close after sending" beside Send — and the customer and order, one link
+each. A reply is emailed to the customer through the mail outbox, committed with the reply; which
+admin wrote it is shown here and never to the customer. Both routers are mounted under
+`adminRouter`, so the gate, the audit log and the route-walking test covered them by existing;
+the test's list of known routers is the one line that had to change.
+
+Verified live: a customer's conversation opened from a delivered order arrived with the order
+attached, the reply's email left through the sweep within 1.2 seconds of the button, the audit
+log recorded it, and the customer's thread said "Hæstore" with no admin address anywhere in it.
+
+---
+
 ## What is deliberately not here
 
-- **Review moderation and the support inbox.** Neither model exists yet — both are Phase 9 —
-  and a console screen with nothing behind it is the disabled-button mistake Phase 4 declined
-  to make. They arrive with their models.
 - **Issuing refunds, and partial refunds.** ADR-013.
 - **Image upload.** A product's photographs are Cloudinary public ids typed into the form. The
   signed direct upload belongs with the Unsplash-to-Cloudinary seeding in Phase 10.
