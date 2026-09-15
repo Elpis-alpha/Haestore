@@ -130,7 +130,10 @@ Keys that collide with a listing parameter — `q`, `sort`, `page`, `per_page`, 
 collision is impossible rather than something to detect later.
 
 Definitions are **archived, never deleted**. Products keep values keyed by definitions no
-longer offered; deleting one would leave those values with no type and no label.
+longer offered; deleting one would leave those values with no type and no label. **The product
+page shows only what a product's shelf still applies** (Phase 10), so an archived, unbound or
+suppressed attribute's value is kept and not presented — restore the definition, or bind it
+again, and it is back. The console's product form still shows every stored value.
 
 ---
 

@@ -95,6 +95,19 @@ Two details are load-bearing:
 - **Sorts are a whitelist.** A client sends `sort=price_asc`, never a Meilisearch sort
   expression. Someone who could name the sort field could order by anything in the
   document and read it out through pagination.
+- **A variant axis is indexed as a fact about the product** (Phase 10). A mug sold in
+  celadon and tenmoku is a celadon mug to someone filtering by glaze, but the glaze lives on
+  its variants, and until Phase 10 the document carried the product's own attributes only, so
+  every filter on an axis — glaze, grind, weight, scent, colour, bed size — matched just the
+  few products sold one way. `toSearchDocument` now folds in every value an **active** variant
+  takes on each axis, unless the product states that attribute itself; numeric axes are
+  indexed as numbers, because variants store them as strings and a range filter compares
+  numbers; a yes-or-no axis becomes a boolean only when every variant agrees. The indexer
+  loads definition types once per batch for this (`loadAttributeTypes`).
+- **`sort=rating` orders by `ratingScore`, not `ratingAverage`** (Phase 10). The score is a
+  Bayesian average written beside the other two in the review's transaction, so one
+  five-star review no longer outranks a dozen at 4.8; the degraded Mongo path sorts by the
+  same field. The card still shows the average. See REVIEWS-AND-SUPPORT.md.
 
 ### The debounce
 

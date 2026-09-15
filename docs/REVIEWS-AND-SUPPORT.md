@@ -88,6 +88,26 @@ transaction:
 3. sets both on the product,
 4. appends a search outbox row.
 
+### "Best rated" is a Bayesian score (Phase 10)
+
+Phase 9 left the listing's `rating` sort ordering one five-star review above two hundred at
+4.9, and said the fix belonged with a seed that made the difference visible. It does now: the
+seeded shop's small lot of Rwandan coffee has one review, of five stars.
+
+The same step now writes a third figure, `ratingScore = (3 × 5 + average × count) / (5 +
+count)` — every average pulled towards three stars by the weight of five imaginary reviews.
+A single five scores 3.33; a dozen at 4.8 score 4.27; two hundred at 4.9 score 4.85; and by a
+few dozen reviews the score and the average are within a tenth of each other. `sort=rating`
+orders by it, in Meilisearch and on the degraded path. In the seeded shop the small lot sorts
+38th of 58.
+
+Three choices in it are deliberate. **The prior is a fixed three, not the shop's own mean** —
+a mean would move every product's score whenever any review anywhere was written, and
+re-index the catalogue to follow it. **A product with no reviews scores zero**, not the prior,
+so "best rated" lists what has been rated first. **The card still shows the average**: the
+score is an ordering, and printing "3.33" beside five stars would misstate what reviewers
+said.
+
 **Counts, not a running average.** Folding each review into the stored figure —
 `(avg × n + r) / (n + 1)` — is cheap and wrong in two quiet ways: every fold re-rounds, so the
 figure drifts away from the reviews it describes, and a hidden or deleted review has to be
@@ -239,9 +259,6 @@ after an edit is marked as such.
   own moderation story.
 - **Helpful votes, and sorting by them.** An unauthenticated vote is noise and an authenticated
   one is a second identity question.
-- **A rating sort that accounts for how many reviews there are.** The listing's `rating` sort
-  still orders one five-star review above two hundred at 4.9. A Bayesian average belongs with
-  the seed, when there are enough reviews for it to matter.
 - **Replying by email.** Replies to the notification are not read into the thread.
 - **Notifying the shop by email** of a new conversation. The dashboard is where the shop looks.
 - **An anonymous contact form** — ADR-014.

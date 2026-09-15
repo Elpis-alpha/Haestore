@@ -20,3 +20,4 @@ so the decision is not silently reversed later by someone who only sees the upsi
 | [012](ADR-012-no-payment-sdks.md) | Payment providers reached with `fetch`, not their SDKs | Accepted |
 | [013](ADR-013-refunds-are-recorded-not-issued.md) | The console records refunds; it does not issue them | Accepted |
 | [014](ADR-014-support-needs-an-account.md) | Support conversations need an account; no anonymous contact form | Accepted |
+| [015](ADR-015-unsplash-photographs-are-hotlinked.md) | Unsplash photographs are hotlinked, not copied into Cloudinary | Accepted |

@@ -39,6 +39,16 @@ Hæstore actually builds it:
   counts. Nothing is hardcoded, and an end-to-end test asserts exactly that.
 - **Admins compose the storefront itself** from ordered, versioned blocks.
 
+## What it looks like
+
+| | |
+|---|---|
+| ![The front page, composed in the console](docs/screenshots/home.jpg) | ![The coffee shelf, with filters generated from its attributes](docs/screenshots/shelf-coffee.jpg) |
+| ![A product, with its photographer credited under the photograph](docs/screenshots/product.jpg) | ![The console's daybook: parcels to pack, people waiting, reviews unread](docs/screenshots/admin-dashboard.jpg) |
+
+Taken from the seeded shop. The rest — the attribute builder, the product form's photographs,
+the composer, best-rated, a phone — are in [docs/screenshots](docs/screenshots/).
+
 ## Quick start
 
 ```bash
@@ -74,12 +84,15 @@ Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)*
 | [REVIEWS-AND-SUPPORT](docs/REVIEWS-AND-SUPPORT.md) | Verified-purchase reviews, moderation after publishing, and support conversations |
 | [ACCESSIBILITY](docs/ACCESSIBILITY.md) | The Phase 9 audit: what was measured, what it found, and what was fixed |
 | [DESIGN-SYSTEM](docs/DESIGN-SYSTEM.md) | Palette, type, the arch and leaf motifs, motion |
-| [DEPLOYMENT](docs/DEPLOYMENT.md) | Cloudflare Workers and the API container |
+| [SEEDING](docs/SEEDING.md) | The demo shop: what the seed builds, how it writes, and the Unsplash rules it keeps |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | Cloudflare Workers and the API container *(Phase 11)* |
 | [decisions/](docs/decisions/) | ADRs — the contested forks and why they went the way they did |
 | [PROGRESS](docs/PROGRESS.md) | Phase-by-phase build state |
 | [MIGRATION](docs/MIGRATION-FROM-ADAPTABLE-STORES.md) | What changed from 2022, and why |
 
 ## Credits
 
-Product photography from [Unsplash](https://unsplash.com), with per-photographer
-attribution stored alongside each image and displayed on the product page.
+Product photography from [Unsplash](https://unsplash.com), served from Unsplash's own CDN as
+its guidelines require, with each photographer credited beside their photograph on the product
+page ([ADR-015](docs/decisions/ADR-015-unsplash-photographs-are-hotlinked.md)). The
+photographs chosen, and their credits, are in `back-end/src/seed/photos.lock.json`.

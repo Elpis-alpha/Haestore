@@ -135,6 +135,18 @@ An admin lowering `onHand` below what is already reserved does not cancel those 
 `inStock`, computed from **active variants only** — an inactive $2 variant must not drag
 a card's "from" price to something nobody can buy.
 
+### Images
+
+`images: [{ publicId, alt, width?, height?, blurDataUrl?, position, credit? }]`
+
+`publicId` is a Cloudinary public id **or** a hotlinked `images.unsplash.com` photograph URL,
+and the schema refuses anything else — it becomes an `<img src>` on every page (ADR-015).
+`blurDataUrl` must be a base64 image data URL, because `next/image` writes it into a CSS
+`url()`. `credit` is `{ author, authorUrl, source, sourceUrl }` with `https` links, present on
+every Unsplash photograph and printed beside it on the product page. The console sends every
+field back on save; until Phase 10 it sent the id and the description only, and an admin edit
+would have stripped a photograph's credit.
+
 ### Review state
 
 `needsAttention` and `validationIssues[]`, set by lenient validation instead of rejecting
@@ -212,9 +224,10 @@ status and the dashboard's counts.
 | `{ needsReview, createdAt }` partial | the moderation queue and the dashboard's count |
 | `{ status, createdAt }` | the console's hidden and all-reviews lists |
 
-**`Product.ratingAverage` and `ratingCount` are written by reviews**, recomputed from the
-per-star counts inside the transaction that changed a review, with a search outbox row in the
-same transaction. They were on the product and the listing card from Phase 2 and written by
+**`Product.ratingAverage`, `ratingCount` and `ratingScore` are written by reviews**,
+recomputed from the per-star counts inside the transaction that changed a review, with a
+search outbox row in the same transaction. `ratingScore` (Phase 10) is the Bayesian average
+"best rated" sorts by, and is never displayed. They were on the product and the listing card from Phase 2 and written by
 nothing until Phase 9.
 
 ## SupportTicket

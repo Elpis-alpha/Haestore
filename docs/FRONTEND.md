@@ -246,6 +246,38 @@ Canonicalisation collapses the *spelling* variants; this keeps the combinatorial
 
 ---
 
+## Photographs (Phase 10)
+
+A product image's `publicId` is one of two things (ADR-015): a Cloudinary public id, for a
+photograph the shop uploaded, or a hotlinked `images.unsplash.com` address, for the seed's.
+`lib/images/source.ts` knows both, and everything that turns an image into a URL goes through
+it:
+
+- **The `next/image` loader** (`lib/images/image-loader.ts`) gives Cloudinary a transformation
+  (`f_auto,q_auto,w_…,c_limit`) and Unsplash the imgix parameters it supports (`w`, `q`,
+  `fit=max`, `auto=format`), set on the URL Unsplash issued so its `ixid` survives.
+- **Open Graph and the JSON-LD** ask for fixed sizes — 1200×630 cropped, 1600 wide — the same
+  way. Until now each built a Cloudinary URL of its own, which would have sent the seed's
+  photographs to a Cloudinary account that has never heard of them.
+
+**The credit sits under the photograph on the product page**: "Photo by *Name* on
+*Unsplash*", both links carrying `utm_source=haestore&utm_medium=referral`. It follows the
+gallery, so the name beside a picture is always the person who took that picture. It is set
+in the faint ink at the smallest size, which the tokens test holds at 4.5:1.
+
+**Placeholders cost nothing here.** Each image carries a `blurDataUrl` the API made — a
+decoded BlurHash for Unsplash's, a sixteen-pixel JPEG for Cloudinary's — which `next/image`
+inlines. The API accepts only a base64 image data URL there, because `next/image` writes it
+into a CSS `url()`.
+
+**A composed front page can show one product twice** — the house espresso hand-picked and
+again in the coffee row — and two elements claiming one view-transition name break the
+transition for both, with an error in the console. The seeded layout was the first to do it.
+`StorefrontSections` now gives the name to each product's first card on the page only; the
+grid takes a set of slugs where it used to take a boolean.
+
+---
+
 ## What is deliberately not here
 
 - **No cart control, and no disabled placeholder for one.** Phase 4 is the read path; the

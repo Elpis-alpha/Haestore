@@ -198,6 +198,27 @@ position keeps its price and stock, a new one starts from the first row's price 
 Nothing exists until Save, which sends the whole product through `updateProduct` — the one
 write pipeline, with its outbox row.
 
+### Photographs (Phase 10)
+
+**Upload photographs** sends files from the browser straight to Cloudinary, in three steps per
+file: `POST /api/admin/media/uploads` returns a ticket signed for the shop's products folder
+and image formats; the browser posts the file and the ticket to Cloudinary; and
+`POST /api/admin/media/uploads/confirm` has the API read the photograph back from Cloudinary's
+own API — width, height and a sixteen-pixel placeholder — which is what the form stores. A
+photograph never passes through the API, and what the product records about it is
+Cloudinary's account rather than the browser's. Nothing is on the shelf until Save. Both
+routes sit under the admin gate, so they are audited and walked by the surface test; neither
+needs step-up, because neither changes the shop.
+
+**Add by public id** is still there, for a photograph already in the account. Its label says it
+takes a Cloudinary public id or an Unsplash address, and the API refuses anything else.
+
+**A seeded photograph shows its credit in the form** — "Photo by … on Unsplash" — and keeps it
+on save. Until this phase the form sent back only each image's id and description, so an admin
+editing a price would have stripped every photograph's dimensions and placeholder and, once
+there were credits, its attribution. Changing an image's source clears those fields, because
+they belonged to the photograph it replaced.
+
 ### `_id` and `id`, settled by rule
 
 Phase 7 noted that the product endpoint returns `_id` while the listing returns `id`. Settled
@@ -338,8 +359,6 @@ log recorded it, and the customer's thread said "Hæstore" with no admin address
 ## What is deliberately not here
 
 - **Issuing refunds, and partial refunds.** ADR-013.
-- **Image upload.** A product's photographs are Cloudinary public ids typed into the form. The
-  signed direct upload belongs with the Unsplash-to-Cloudinary seeding in Phase 10.
 - **Bulk actions.** Nothing in a catalogue of this size needs them yet.
 - **A console outside the site chrome.** The site header stays above the console, deliberately:
   walking behind the counter does not take you out of the shop, and the header is the fastest

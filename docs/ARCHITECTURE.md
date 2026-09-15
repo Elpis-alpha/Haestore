@@ -57,7 +57,7 @@ invalidates every signature.
 | **MongoDB** | Everything durable: catalog, carts, orders, users, tickets | Ephemeral auth state |
 | **Redis** | OTP challenges, sessions, rate limits, caches, BullMQ queues | Anything whose loss is a lost sale |
 | **Meilisearch** | The storefront read model: listing, filtering, faceting, search | Any source of truth |
-| **Cloudinary** | Image bytes and transformations | Product metadata |
+| **Cloudinary** | The shop's own photographs: bytes and transformations | Product metadata; the seed's Unsplash photographs, which are hotlinked (ADR-015) |
 
 The rule that keeps this honest: **Redis must be safe to flush at 3 a.m.** Carts
 therefore live in Mongo with a TTL index, not Redis, because a lost cart is a lost
@@ -125,9 +125,9 @@ and a dead analytics sink are all things the shop keeps taking orders through.
 
 Three Cloudflare constraints shaped the frontend design rather than being discovered
 late: the adapter does not support Node middleware, so **session gating happens in
-Server Components and Route Handlers, never in `middleware.ts`**; image optimization
-is delegated to Cloudinary through a custom `next/image` loader rather than running on
-Worker CPU; and the compressed Worker size limit (3 MiB free, 10 MiB paid) means the
+Server Components and Route Handlers, never in `middleware.ts`**; image resizing
+is delegated to whichever CDN holds the photograph — Cloudinary for the shop's own, Unsplash
+for the seed's — through a custom `next/image` loader rather than running on Worker CPU; and the compressed Worker size limit (3 MiB free, 10 MiB paid) means the
 server bundle stays lean, with fonts and static assets served as Workers static assets
 where they do not count toward it.
 

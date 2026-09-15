@@ -18,8 +18,8 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 7 | Checkout | ✅ Complete |
 | 8 | Admin console | ✅ Complete |
 | 9 | Reviews, support, polish | ✅ Complete |
-| 10 | Seed & docs | 🟡 Next |
-| 11 | Deploy | ⬜ Not started |
+| 10 | Seed & docs | ✅ Complete |
+| 11 | Deploy | 🟡 Next |
 
 ---
 
@@ -1271,22 +1271,177 @@ selecting a star. Held for ninety milliseconds, as a person holds them, they sel
 
 ---
 
+## Phase 10 — Seed & docs
+
+**Goal:** a demo shop built through the services, with photographs and a history behind it;
+the end-to-end suite the plan described; a documentation pass; screenshots.
+
+Full write-ups: **[SEEDING.md](SEEDING.md)** and
+**[MIGRATION-FROM-ADAPTABLE-STORES.md](MIGRATION-FROM-ADAPTABLE-STORES.md)**. New decision:
+**[ADR-015](decisions/ADR-015-unsplash-photographs-are-hotlinked.md)**.
+
+### Done
+
+- **The seed** — `npm --prefix back-end run seed [-- --reset]`, about twenty seconds: 36
+  attribute definitions, 23 shelves, 59 products (one deliberate draft), 36 customers, 246
+  orders across five months, 175 published reviews with one hidden and 12 unread, three
+  support conversations, and version 1 of a composed front page. **Every record is parsed by
+  the schema a request would be and written by the service it would reach**; only dates are
+  written directly, afterwards. Deterministic (seed 1822). It refuses a database with a shop in
+  it without `--reset`, and production without `--allow-production`.
+- **Deliberately dissimilar shelves**, held by a unit test: Coffee and Cups & mugs share no
+  attribute at all; `origin` is bound once on Coffee & tea and inherited; Vases suppress the
+  microwave question. `catalogueProblems()` checks the data on every `npm test`.
+- **Scripted moments the docs depend on** — a small lot with one five-star review, a review the
+  shop hid, a draft missing its roast, an order in each unfinished state, and a chipped mug a
+  customer wrote in about.
+- **58 Unsplash photographs, hotlinked** (ADR-015): chosen from 41 cached searches with a
+  contact sheet (`seed:photos -- --curate`), locked in `photos.lock.json`, each credited with
+  UTM links, each placeheld by its own BlurHash decoded to an eight-pixel PNG, and every
+  download reported to Unsplash — 58 of 58.
+- **The credit on the product page**, under the photograph, following the gallery.
+- **Signed Cloudinary upload in the console** — a ticket signed for the products folder, the
+  file straight from the browser to Cloudinary, and the API reading the result back before the
+  form stores it. `/api/admin/media/*`, under the admin gate.
+- **Image sources are validated**: `publicId` is a Cloudinary id or an `images.unsplash.com`
+  photograph and nothing else, `blurDataUrl` a base64 image data URL, credit links `https`.
+- **`image-loader.ts`** (was `cloudinary-loader.ts`) resizes both; Open Graph and JSON-LD share
+  `lib/images/source.ts`.
+- **"Best rated" is a Bayesian score** — `ratingScore`, written in the review's transaction,
+  sortable in Meilisearch and used by the degraded path. The one-review small lot sorts 38th of
+  58.
+- **The end-to-end suite** — Playwright 1.63, `npm --prefix front-end run e2e`, two specs and four
+  tests. *The purchase*: filter a shelf, see the credit, add to a guest bag, sign in and merge it
+  into the bag the account already had, pay with Stripe's `4242` card with no webhook forwarded,
+  see the confirmation only the reconcile path can produce, find the order, pack, ship and
+  deliver it in the console, review it. *The adaptable claim*: define a yes-or-no attribute, bind
+  it to Cups & mugs, set it on a mug, and watch the filter appear and narrow the shelf to one.
+- **The documentation pass** — README, LOCAL-DEV (seeding, the suite), ARCHITECTURE, DATA-MODEL
+  (images, `ratingScore`), SEARCH, FRONTEND and ADMIN (photographs), REVIEWS-AND-SUPPORT (the
+  Bayesian sort), both application READMEs (stale Mailpit instructions removed), the ADR index.
+- **Screenshots** in `docs/screenshots/`, taken from the seeded shop.
+- **`openapi.json` — 81 paths, 50 schemas** (79 and 48).
+
+### Verified, not assumed
+
+**Backend: 391 unit + 251 integration** (340 + 249). **Frontend: 164 unit** (156) **+ 4 end to
+end.** `openapi.json` regenerates byte for byte.
+
+- **The seed checks itself against its own facts** (`seed.integration.test.ts`): every product's
+  rating, count and score equal what its published reviews say; every variant's reserved stock
+  equals what unshipped orders hold, and `available + reserved === onHand`; every review comes
+  from its author's own delivered order and was written after the delivery; every order's
+  history runs forwards and stops at "now"; nothing owes an email. Run twice, it refuses the
+  second time unless told to reset.
+- **The full suite ran green in one pass, 1.6 minutes**, against the live stack with nothing
+  forwarding Stripe's webhooks.
+- **Cloudinary's signature matches the worked example in Cloudinary's documentation**, and the
+  BlurHash placeholder is read back from its PNG pixel by pixel.
+- In a browser, on the seeded database: the front page, the coffee shelf's generated filters,
+  the credit's links with their UTM parameters, no broken images, and no console errors on the
+  home or product pages once the fixes below were in.
+
+### Decisions taken during implementation
+
+- **ADR-015 — hotlink, don't copy.** Unsplash requires its images to be served from its CDN, so
+  the plan's Unsplash-to-Cloudinary pipeline could not be built as written. Cloudinary keeps the
+  shop's own photographs.
+- **Choosing and seeding are separate steps**, and the choices are committed, so a fresh clone
+  seeds the same shop without spending the fifty-an-hour quota. `--curate` reports no downloads,
+  so photographs looked at and passed over are not counted as used.
+- **Required means required of every product.** Nothing a product might sell along an axis is
+  marked required, or every coffee sold in two sizes would be flagged.
+- **The Bayesian prior is a fixed three at the weight of five reviews**; a product with no reviews
+  scores zero; the card keeps showing the average.
+- **The suite lives within the sign-in throttle rather than around it**: sessions are reused, the
+  merge's second sign-in waits out the cooldown, and a withheld code fails with the limit named.
+- **Customers are created directly as users** — accounts only come into being through a verified
+  code otherwise — and the addresses in `ADMIN_EMAILS` get the role, as a first sign-in would give.
+
+### Deviations from the plan
+
+- **Unsplash photographs are not in Cloudinary.** ADR-015.
+- **The attribution is on the product page, not on every card** — this project's reading of
+  Unsplash's guideline, stated in the ADR with what would change it.
+- **The suite is not in CI.** It needs a seeded stack, Stripe's test mode and a real browser; it
+  runs locally, as LOCAL-DEV.md describes. Codes come from the dev outbox, not Mailpit (ADR-007).
+- **59 products, not "about 50"**, and **the shelves have no photographs**: a shelf image would
+  need a credit of its own on the front page, and the mark already stands in for one.
+- **The backend is still on vitest 2.**
+
+### Defects found by building and running it
+
+1. **Saving a product from the console stripped its images** of width, height, placeholder and —
+   once there were any — credit. The form sent back only each image's id and description.
+2. **A composed front page with one product in two rows broke both view transitions**, with a
+   duplicate-name error in the console. Only a product's first card on the page is named now.
+3. **An inherited attribute and a shelf's own under the same heading drew the heading twice** on
+   the product page, with a duplicate React key — Coffee's "Where it grows". Groups are kept
+   together in the effective attribute set, so the page, the console and the API agree.
+4. **Publishing a review from an order's "Review it" link reopened the dialog at once** as "Edit
+   your review", because the product moved to a list whose dialog also opens for `?write=`. The
+   parameter goes on save. The suite found it.
+5. **Open Graph and the JSON-LD built Cloudinary URLs themselves**, which would have sent every
+   seeded photograph to an account that has never held it.
+6. **The seed's own**: spreading a Mongoose subdocument into `amountCaptured` copied Mongoose's
+   internals rather than the amount, and `markOrderPaid` refused the payment as a mismatch — the
+   Phase 7 guard doing exactly its job.
+7. **A value for an archived attribute repeated a heading on the product page.** Products keep
+   such values, so restoring the attribute brings them back, but the public product route listed
+   them after every group under their old heading, and the page drew that heading twice with a
+   duplicate key. The route now returns only the attributes the shelf still applies; the
+   console's product is unchanged. Found on the seeded mug, after the suite archived its test
+   attribute.
+8. **Filters on a variant axis found almost nothing.** The search document carried a product's own
+   attributes and ignored what its variants are sold in, so glaze was indexed for 3 products (the
+   ones sold in one glaze), grind for 1, scent for 3, and bed size for none — filtering Cups &
+   mugs by celadon did not find the Everyday Mug, which comes in celadon. The document now folds
+   in every active variant's axis values, numbers as numbers. After a reseed: seven glazes with
+   counts, all four grinds, weight ranging 50–1000 g, and celadon finding exactly the three
+   celadon pieces. A Phase 3 gap that stayed invisible until a catalogue had real variants.
+
+### Things worth knowing before Phase 11
+
+- **The Worker bundle** measured **1501.33 KiB gzipped** in a `cf:build` dry run (1498.79 KiB at Phase 9) — Phase 10 added 2.5 KiB, most of it the image-source module and the upload control.
+- **There is no CSP yet.** One added in Phase 11 must allow `images.unsplash.com` and
+  `res.cloudinary.com` as image sources, and `api.cloudinary.com` as a connect target for uploads.
+- **`NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` is a build-time value** for the Worker: without it an
+  uploaded photograph renders broken. The seed's photographs do not need it.
+- **The production image cannot seed** — the seed is excluded from the build and runs from `src`
+  with `tsx`. Seeding a deployment means running it from a checkout against that database, with
+  `--allow-production`, and with the Unsplash key on that machine if downloads are to be
+  reported there (the ledger is per machine).
+- **Checkout does not prefill a signed-in customer's email**, and tells them "No account needed".
+  The suite found it; it belongs to a checkout change rather than to this phase.
+- **A sold-out variant still counts in a filter.** Axis values come from *active* variants, and a
+  variant at zero stock is still active, so "rose geranium" finds the balm whose rose geranium is
+  sold out. "In stock only" is the filter for that, and it is a product-level flag.
+- **The Coffee shelf lists tea origins with a count of zero**, because `origin` is bound on the
+  parent and the panel shows zero-count values by design. If it reads as noise, the decision is
+  whether to drop values that are zero across the whole branch.
+- **A deployed smoke test cannot sign in**: codes are read from the development outbox, which
+  production does not mount. A check against a deployment is the signed-out half of the suite.
+- **After a reseed, the development fetch cache serves product pages for up to a minute** from the
+  shop that was there before. Clear `front-end/.next`.
+
+---
+
 ## Next action
 
-**Phase 10 — Seed & docs.** Unsplash-to-Cloudinary seeding, a full documentation pass, and
-screenshots. New docs: `SEEDING` and `MIGRATION-FROM-ADAPTABLE-STORES`.
+**Phase 11 — Deploy.** The storefront to Cloudflare Workers as `heastore-web` through OpenNext,
+and the API as a container on `172.17.0.1:5003:5000`. New doc: `DEPLOYMENT`, which the README
+already links.
 
 What is already waiting:
 
-- **A catalogue to seed into, and every write path to seed through.** Categories, attribute
-  definitions, products and variants through their services, so derived fields, validation
-  issues and outbox rows are produced the way production produces them; delivered orders and
-  reviews the same way (see "Things worth knowing" above).
-- **Deliberately dissimilar attributes per shelf**, as the plan asks — coffee, ceramics,
-  apothecary — are what make the adaptable claim visible on a fresh clone.
-- **The signed Cloudinary upload** Phase 8 deferred belongs with the seed, which is its first
-  real user, and the Unsplash rules are not optional: ping `download_location` on use, store and
-  show attribution, and cache responses so a full seed never needs a fresh 50-an-hour quota.
-- **The end-to-end suite** the plan describes can be written against seeded data: browse, filter,
-  buy as a guest, sign in and merge, pay with webhooks disabled, deliver, review — and the admin
-  run that defines an attribute and watches its facet appear.
+- **A bundle to measure against the limit for real** — 1501.33 KiB gzipped at the end of Phase 10,
+  against 3 MiB on the free plan.
+- **The build-time and runtime environment**: `NEXT_PUBLIC_*` values baked into the Worker
+  (site URL, Cloudinary cloud name, Stripe and PayPal client ids), the API's `.env` with the Gmail
+  driver, `ADMIN_EMAILS`, peppers, and `PAYPAL_WEBHOOK_ID` once a webhook is registered.
+- **Stripe's webhook endpoint in the dashboard**, pointing at the deployed API, with its signing
+  secret — the reconcile path makes it optional, not unnecessary.
+- **The incremental cache outliving a deploy** (Phase 9's note), now with a new field on every
+  product image.
+- **A CSP**, if one is added, that allows the two image CDNs and Cloudinary's upload API.
+- **Seeding the deployed database** from a checkout, as above.

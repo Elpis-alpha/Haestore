@@ -127,6 +127,58 @@ The overrides matter as much as the interval. `back-end/.env` may set `MAIL_DRIV
 and a real address in `ADMIN_EMAILS`, and a live run then emails sign-in codes and replies to a
 real inbox. Values set on the command line win over `.env`.
 
+## Seeding
+
+```bash
+npm --prefix back-end run seed -- --reset
+```
+
+Builds the demo shop in about twenty seconds: 59 products on 23 shelves, five months of orders
+and reviews, three support conversations and a composed front page. Everything is written
+through the services, so the ratings, stock and search index are real. `--reset` replaces the
+whole database, accounts included. The full account is **[SEEDING.md](SEEDING.md)**.
+
+- **No keys are needed to see the photographs.** They are hotlinked from Unsplash and their
+  choices are committed. `UNSPLASH_ACCESS_KEY` is for choosing new ones and for reporting
+  downloads to Unsplash, which the seed does once per photograph per machine.
+- **`NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`** in `front-end/.env.local` is what makes a photograph
+  uploaded from the console display; the seed's do not need it.
+- **Clear `front-end/.next` after a reseed** if the storefront was already running. The
+  development fetch cache serves product pages for up to a minute, from the shop that was
+  there before.
+
+## The end-to-end suite
+
+Against a running, seeded shop, with the API on console mail and the suite's admin allowed:
+
+```bash
+MAIL_DRIVER=console ADMIN_EMAILS=keeper@haestore.test SEARCH_SETTINGS_DEBOUNCE_MS=2000 \
+  back-end/node_modules/.bin/tsx back-end/src/server.ts
+npm --prefix front-end run dev
+npm --prefix back-end run seed -- --reset
+npm --prefix front-end run e2e      # `npx playwright install chromium` the first time
+```
+
+Two flows. **The purchase**: filter a shelf, add to the bag as a guest, sign in and watch the
+guest bag merge into the one the account already had, pay with Stripe's `4242` test card, then
+pack, ship and deliver the order in the console and review it. No webhook is forwarded, so the
+order is confirmed only if the return page's reconcile works. **The adaptable claim**: define a
+yes-or-no attribute in the console, bind it to Cups & mugs, set it on a mug, and wait for the
+filter to appear on that shelf and narrow it to one.
+
+Things worth knowing before a run:
+
+- **It spends real sign-in codes, and the throttle is not switched off for it.** A run asks for
+  three codes from one IP; the limits are twenty an hour per IP and five an hour per address,
+  and a withheld code looks exactly like a sent one. The suite reuses sessions to stay inside
+  them, and the purchase flow waits out the one-minute resend cooldown before its second
+  sign-in. When iterating quickly, clear the counters: `npm run redis`, then
+  `EVAL "for _,k in ipairs(redis.call('KEYS','otp:*')) do redis.call('DEL',k) end" 0`.
+- **Stripe's test mode is reached for real**, so the machine needs the network and the test
+  keys in both `.env` files.
+- **It leaves things behind**: a customer, a paid and reviewed order, and an archived attribute.
+  Reseed before taking screenshots.
+
 ---
 
 ## The MongoDB replica set
