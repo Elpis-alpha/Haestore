@@ -1,0 +1,95 @@
+# Hæstore on the VPS: the API and the two datastores it keeps beside it.
+#
+# MongoDB is NOT here — it is external (a hosted replica set). Nothing publishes a port
+# except the API, and that only on the docker bridge gateway, where the host's nginx
+# reaches it. See docs/DEPLOYMENT.md.
+#
+#   cd deploy/vps && docker compose up -d --build
+#   docker compose --profile seed run --rm seed --allow-production   # one-off
+
+name: haestore-prod
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Sessions and sign-in challenges live here, so it persists (AOF) and has a password
+    # even though no port is published: defence in depth for the only store holding
+    # live sessions.
+    command: ["sh", "-c", 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/vps/.env}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in deploy/vps/.env}
+      # production refuses to start without a master key of at least 16 bytes, and
+      # turns off the unauthenticated search preview.
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ../../back-end
+      dockerfile: Dockerfile
+    image: haestore-api:latest
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY}
+    ports:
+      # The bridge gateway, not 0.0.0.0: the host's nginx proxies here; the internet can't.
+      - "172.17.0.1:5003:5000"
+    depends_on:
+      redis: { condition: service_healthy }
+      meilisearch: { condition: service_healthy }
+
+  # One-off, never started by `up`. Redis and Meilisearch publish no port, so the seed
+  # runs here, on their network, rather than from a checkout. See docs/SEEDING.md.
+  seed:
+    profiles: ["seed"]
+    build:
+      context: ../../back-end
+      dockerfile: Dockerfile
+      target: seed
+    env_file: ./.env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY}
+      # Unsplash's download ledger is per machine (SEEDING.md); a volume keeps it.
+      UNSPLASH_CACHE_DIR: /unsplash-cache
+      # Only the API container drains the outboxes.
+      ORDER_JOBS_ENABLED: "false"
+      SEARCH_INDEXING_ENABLED: "false"
+    volumes:
+      - unsplash-ledger:/unsplash-cache
+    depends_on:
+      redis: { condition: service_healthy }
+      meilisearch: { condition: service_healthy }
+
+volumes:
+  redis-data:
+  meili-data:
+  unsplash-ledger:
