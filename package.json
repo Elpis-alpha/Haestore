@@ -17,7 +17,8 @@
     "install:all": "npm --prefix back-end install && npm --prefix front-end install",
     "sync:types": "node scripts/sync-api-types.mjs",
     "check": "npm --prefix back-end run check && npm --prefix front-end run check",
-    "probe": "node scripts/probe-infra.mjs"
+    "probe": "node scripts/probe-infra.mjs",
+    "smoke": "node scripts/smoke-deploy.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
