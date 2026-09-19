@@ -67,14 +67,15 @@ browser ──► Cloudflare ──► Worker `heastore-web` (OpenNext)
 
 - `deploy/vps/compose.yml` — Redis (`requirepass`, AOF), Meilisearch (`MEILI_ENV=production`,
   master key), API built from `../../back-end` bound to `172.17.0.1:5003:5000`.
-  No Mongo; no datastore host ports.
+  No Mongo; no datastore host ports. A `seed` profile service built from a new `seed`
+  Dockerfile stage runs the seed on the compose network.
 - `deploy/vps/.env.example` — production API env, test-mode payments only.
 - `scripts/smoke-deploy.mjs <web-url> <api-url>` — signed-out checks: `/healthz`,
   `/readyz`, home, a product page, `/sitemap.xml`, CSP header present, `/api/*` through the
   Worker returns the API's JSON error shape.
 - `docs/DEPLOYMENT.md` — first-deploy runbook: create the KV namespace, secrets, build-vs-runtime
-  env, nginx requirements for 5003, external Mongo requirements, seeding from a checkout with
-  `--allow-production`, optional test-mode webhooks, redeploy and rollback, adding a tag cache later.
+  env, nginx requirements for 5003, external Mongo requirements, seeding through a one-off
+  `seed` compose service (Redis and Meilisearch publish no port, so a checkout cannot reach them), optional test-mode webhooks, redeploy and rollback, adding a tag cache later.
 - `docs/decisions/ADR-016-test-mode-only.md`, ADR index, `PROGRESS.md`, README links.
 
 ## Verification (local)
