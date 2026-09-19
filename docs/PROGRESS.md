@@ -19,7 +19,7 @@ Plan of record: `~/.claude/plans/this-was-once-called-lexical-hellman.md`
 | 8 | Admin console | ✅ Complete |
 | 9 | Reviews, support, polish | ✅ Complete |
 | 10 | Seed & docs | ✅ Complete |
-| 11 | Deploy | 🟡 Next |
+| 11 | Deploy | ✅ Config complete — the deploy itself is the owner's |
 
 ---
 
@@ -1426,22 +1426,144 @@ end.** `openapi.json` regenerates byte for byte.
 
 ---
 
+## Phase 11 — Deploy
+
+**Goal:** everything a first deploy needs — configuration, the code changes a real deployment
+demands, and the runbook — verified on this machine. **Nothing was deployed**: the owner runs
+the Cloudflare and VPS deploys. **No live payment credentials, ever.**
+
+Full write-up: **[DEPLOYMENT.md](DEPLOYMENT.md)**. New decision:
+**[ADR-016](decisions/ADR-016-test-mode-only.md)**. Design and plan:
+`docs/superpowers/specs/2026-09-19-phase-11-deploy-design.md` and
+`docs/superpowers/plans/2026-09-19-phase-11-deploy.md`.
+
+### Done
+
+- **The Worker's cache** — OpenNext's KV incremental cache (`NEXT_INC_CACHE_KV`), keyed per
+  build, so a deploy never serves a render from the previous API contract (Phase 9's note).
+  Time-based revalidation through the memory queue and a `WORKER_SELF_REFERENCE` binding.
+  **No tag cache**: Publish now says visitors see it within five minutes.
+- **Security headers** on every page: a CSP (Stripe, PayPal sandbox, Cloudinary, Unsplash, the
+  console's upload), HSTS without `includeSubDomains`, `nosniff`, referrer and permissions
+  policies. `/_next/static/*` immutable through `public/_headers`.
+- **The shopper's address across the proxy** — the middleware stamps `cf-connecting-ip` on
+  `/api/*` with `PROXY_SHARED_SECRET`; the API believes it only with the secret, compared in
+  constant time, and redacts the secret from its logs.
+- **Live payment keys refused** (ADR-016) — at API boot (`sk_live_`, `rk_live_`,
+  `PAYPAL_ENV=live`) and at the Worker build (`pk_live_`), naming the key.
+- **The VPS** — `deploy/vps/compose.yml`: Redis with a password, Meilisearch in production
+  mode, the API on `172.17.0.1:5003`, no Mongo, no other published port; a `seed` profile
+  built from a new `seed` Dockerfile stage runs the seed on the compose network.
+  `deploy/vps/.env.example` for production.
+- **`front-end/.env.production.example`**, `wrangler.jsonc` bindings with placeholders, and
+  `.dev.vars` gitignored.
+- **`npm run smoke -- <web> <api>`** — a signed-out check of a deployment, nine checks.
+- **Docs** — DEPLOYMENT (with what nginx must do for 5003), ADR-016, LOCAL-DEV ("The Worker,
+  locally"), the ADR index, the README table; the back-end `.env.example` lost its stale
+  Mailpit header and no longer implies a hosted cluster needs `directConnection`.
+
+### Verified, not assumed
+
+**Backend: 405 unit + 251 integration** (391 + 251). **Frontend: 181 unit** (164) **+ 4 end to
+end**, all passing — the end-to-end suite rerun after this phase's middleware change.
+
+- **The production compose file, run from its template**, with a throwaway replica set standing
+  in for the external cluster and a connection string without `directConnection`: `/readyz`
+  ready on all three stores; only the API publishing a port; Meilisearch reporting
+  `"production"`; the seed service building the whole shop in 16 seconds and search answering
+  through the API's relay.
+- **The Worker in `cf:preview` against that API, through an nginx** configured exactly as
+  DEPLOYMENT.md asks of the VPS's: the smoke check passed, with HSTS skipped over http.
+- **The address stamp crosses the Worker, the rewrite and nginx**: a sign-in request carrying
+  `cf-connecting-ip: 198.51.100.77` was throttled under that address; one sent straight to the
+  API with a forged address and a wrong secret was throttled under its real one; the secret
+  never appears in the API's log.
+- **The CSP in a real browser, every frame read**: zero violations across the storefront (34
+  Unsplash photographs, none broken), a guest purchase with Stripe's `4242` card to its
+  confirmation, the PayPal sandbox button (its frame served from `www.sandbox.paypal.com`), the
+  account area, and eleven console pages including a product's editor. The console's upload target was reached from the
+  page (Cloudinary answered 401 to an unsigned request) — the connection is allowed, and nothing
+  was uploaded.
+- **Refusals**: the API exits naming `STRIPE_SECRET_KEY` or `PAYPAL_ENV`; the Worker build fails
+  naming a `pk_live_` key, a port-bearing `API_ORIGIN`, or none.
+- **Break-it check**: removing the secret comparison turned the wrong-secret test red.
+- **Bundle: 1499.88 KiB gzipped** in a `wrangler deploy --dry-run` (1501.33 at Phase 10; 1507.80
+  when built against the seeded shop).
+
+### Decisions taken during implementation
+
+- **ADR-016 — the shop takes no real money.** A live key would work, silently; it is refused.
+- **No tag cache.** Its only caller is Publish, and it costs a D1 read on every cached page.
+- **`'unsafe-inline'` in `script-src`**, because a nonce would make every page uncacheable; and
+  **no `upgrade-insecure-requests`**, which bought nothing over https and broke redirects on
+  http.
+- **The seed runs in a container on the VPS**, because Redis and Meilisearch publish no port.
+- **The address stamp rides the existing middleware**, extended to `/api/*`, rather than a
+  second middleware or a Route Handler proxy.
+- **The root repo's scripts stay out of Prettier**, as `probe-infra.mjs` already was.
+
+### Deviations from the plan
+
+- **Nothing was deployed** — by the owner's instruction. No `wrangler deploy`, no dashboard.
+- **No nginx configuration ships**; the VPS's nginx exists. DEPLOYMENT.md states its duties.
+- **MongoDB is external**, so the VPS compose file has no Mongo — the plan had it beside the API.
+- **The spec seeded "from a checkout"**; it runs in a container instead (above).
+
+### Defects found by building and running it
+
+1. **The Worker had never been able to proxy `/api/*` to an origin with a port.** OpenNext
+   compiles the rewrite's destination host with path-to-regexp, which reads `:5003` — or the
+   default `:5000` — as a parameter and throws on every request: a 500 from the Worker and
+   nothing in the API's log. `next dev` parses the destination as a URL first, which is why
+   every earlier phase's proxy check passed. Unfixed upstream as of `@opennextjs/aws` 4.1.5. The
+   deployment's shape avoids it (nginx on 443); `cf:build` now refuses a port-bearing or missing
+   `API_ORIGIN`, naming the cause, and CI's Worker build carries a portless placeholder.
+2. **A fresh copy of `back-end/.env.example` had never booted.** dotenv and Compose's `env_file`
+   pass `KEY=` through as an empty string, which optional `url()` and `min(32)` keys rejected —
+   and this phase's own `PROXY_SHARED_SECRET=`, documented as "leave empty locally", would have
+   joined them. An empty value now means unset.
+3. **`upgrade-insecure-requests` sent every http redirect to `https://localhost`**, so an http
+   run of the production build broke the sign-in redirect and the listing's 308s.
+4. **The sign-in throttle would have held every shopper in one bucket** once deployed — the
+   reason for the address stamp, found while designing this phase rather than after it.
+
+One **non-reproducible failure**, recorded so it is not chased: one Stripe payment in a
+long-lived browser page never reached Stripe (the intent stayed `requires_payment_method`).
+The same flow confirmed five times in fresh contexts, with and without the CSP. That page had
+earlier been through the `https://localhost` redirect failures above.
+
+### Things worth knowing before the first deploy
+
+- **`API_ORIGIN` is set twice**, to the same portless value: in the shell for `cf:build`, and in
+  `wrangler.jsonc` `vars`.
+- **`PROXY_SHARED_SECRET` is set twice**, to the same value: `deploy/vps/.env` and
+  `wrangler secret put`. A mismatch breaks nothing visibly — every shopper shares one sign-in
+  throttle again, and codes are withheld for everyone after twenty requests in an hour.
+- **Deploy with `npm run cf:deploy`**, which also fills the KV cache with the prerendered pages.
+- **The external cluster's IP access list must include the VPS**, and its connection string
+  must not carry `directConnection`.
+- **`tsx watch` ignores SIGTERM**, and `wrangler` restarts a killed `workerd`: stop local
+  servers by process group, never by what holds the port, and never with `pkill -f` from a
+  script whose own command line matches.
+- **Checkout still does not prefill a signed-in customer's email** (Phase 10's note), and a
+  sold-out variant still counts in a filter. Neither is a deployment concern.
+
+---
+
 ## Next action
 
-**Phase 11 — Deploy.** The storefront to Cloudflare Workers as `heastore-web` through OpenNext,
-and the API as a container on `172.17.0.1:5003:5000`. New doc: `DEPLOYMENT`, which the README
-already links.
+**Phase 11's configuration is complete; the deploy is the owner's.** Follow
+**[DEPLOYMENT.md](DEPLOYMENT.md)** in this order:
 
-What is already waiting:
+1. A hosted MongoDB replica set, with the VPS in its IP access list.
+2. On the VPS: `deploy/vps/.env` from its template, `docker compose up -d --build`, `/readyz`.
+3. nginx on 443 for the API's hostname → `172.17.0.1:5003`, per "What nginx must do".
+4. The seed: `docker compose --profile seed run --rm seed --allow-production`.
+5. Cloudflare: the KV namespace id and `API_ORIGIN` in `wrangler.jsonc`,
+   `wrangler secret put PROXY_SHARED_SECRET`, the build-time values, `cf:build`, `cf:deploy`,
+   the shop's hostname.
+6. `npm run smoke -- https://<shop> https://<api>`.
 
-- **A bundle to measure against the limit for real** — 1501.33 KiB gzipped at the end of Phase 10,
-  against 3 MiB on the free plan.
-- **The build-time and runtime environment**: `NEXT_PUBLIC_*` values baked into the Worker
-  (site URL, Cloudinary cloud name, Stripe and PayPal client ids), the API's `.env` with the Gmail
-  driver, `ADMIN_EMAILS`, peppers, and `PAYPAL_WEBHOOK_ID` once a webhook is registered.
-- **Stripe's webhook endpoint in the dashboard**, pointing at the deployed API, with its signing
-  secret — the reconcile path makes it optional, not unnecessary.
-- **The incremental cache outliving a deploy** (Phase 9's note), now with a new field on every
-  product image.
-- **A CSP**, if one is added, that allows the two image CDNs and Cloudinary's upload API.
-- **Seeding the deployed database** from a checkout, as above.
+Nothing after that is planned. Candidates, none started: prefilling a signed-in customer's
+checkout email; dropping filter values that are zero across a whole branch; the backend's move
+off vitest 2; the end-to-end suite in CI against a seeded stack.

@@ -85,7 +85,7 @@ Full setup, ports and troubleshooting: **[docs/LOCAL-DEV.md](docs/LOCAL-DEV.md)*
 | [ACCESSIBILITY](docs/ACCESSIBILITY.md) | The Phase 9 audit: what was measured, what it found, and what was fixed |
 | [DESIGN-SYSTEM](docs/DESIGN-SYSTEM.md) | Palette, type, the arch and leaf motifs, motion |
 | [SEEDING](docs/SEEDING.md) | The demo shop: what the seed builds, how it writes, and the Unsplash rules it keeps |
-| [DEPLOYMENT](docs/DEPLOYMENT.md) | Cloudflare Workers and the API container *(Phase 11)* |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | The first deploy: the Worker, the API behind nginx, secrets, seeding, rollback |
 | [decisions/](docs/decisions/) | ADRs — the contested forks and why they went the way they did |
 | [PROGRESS](docs/PROGRESS.md) | Phase-by-phase build state |
 | [MIGRATION](docs/MIGRATION-FROM-ADAPTABLE-STORES.md) | What changed from 2022, and why |

@@ -179,6 +179,48 @@ Things worth knowing before a run:
 - **It leaves things behind**: a customer, a paid and reviewed order, and an archived attribute.
   Reseed before taking screenshots.
 
+## The Worker, locally
+
+`next dev` is not the Worker. To run the build Cloudflare would run — OpenNext, the KV page
+cache, the middleware, the security headers — use `cf:preview`, which serves it with
+`wrangler` on `http://localhost:8787`.
+
+**The Worker cannot proxy `/api/*` to an address with a port** (DEPLOYMENT.md, "The
+Worker"), and the local API is on `:5000`, so it needs something on port 80 in front of it.
+Port 80 on this machine is taken, but a container's own bridge address is reachable from the
+host on any port without publishing one:
+
+```bash
+cat > /tmp/nginx-api.conf <<'EOF'
+server {
+  listen 80;
+  client_max_body_size 1m;
+  location / {
+    proxy_pass http://172.17.0.1:5000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+EOF
+docker run -d --rm --name haestore-api-front -v /tmp/nginx-api.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
+API=http://$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' haestore-api-front)
+
+printf 'API_ORIGIN=%s\nPROXY_SHARED_SECRET=%s\n' "$API" "$(openssl rand -hex 32)" > front-end/.dev.vars
+API_ORIGIN=$API NEXT_PUBLIC_SITE_URL=http://localhost:8787 npm --prefix front-end run cf:build
+npm --prefix front-end run cf:preview
+```
+
+The API listens on every interface, so the container reaches it at the bridge address
+`172.17.0.1`. Phase 11 was verified the same way with the production compose file
+(`deploy/vps/compose.yml`, on `:5003`) standing in for the VPS. Give the API the same
+`PROXY_SHARED_SECRET` as `.dev.vars` to exercise the shopper's-address stamp; a browser
+sends no `cf-connecting-ip`, so send one with `curl -H` to see it used.
+
+`npm run smoke -- http://localhost:8787 $API` then checks the pair. Stop the preview by
+killing the `wrangler` process, not only what holds `:8787` — `wrangler` restarts its
+`workerd` child — and never with `pkill -f` from a script whose own command line matches.
+
 ---
 
 ## The MongoDB replica set
