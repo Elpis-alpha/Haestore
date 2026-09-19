@@ -1464,7 +1464,7 @@ Full write-up: **[DEPLOYMENT.md](DEPLOYMENT.md)**. New decision:
 
 ### Verified, not assumed
 
-**Backend: 405 unit + 251 integration** (391 + 251). **Frontend: 181 unit** (164) **+ 4 end to
+**Backend: 405 unit + 251 integration** (391 + 251). **Frontend: 182 unit** (164) **+ 4 end to
 end**, all passing — the end-to-end suite rerun after this phase's middleware change.
 
 - **The production compose file, run from its template**, with a throwaway replica set standing
