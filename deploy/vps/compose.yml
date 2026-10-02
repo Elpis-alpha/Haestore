@@ -1,8 +1,8 @@
 # Hæstore on the VPS: the API and the two datastores it keeps beside it.
 #
-# MongoDB is NOT here — it is external (a hosted replica set). Nothing publishes a port
-# except the API, and that only on the docker bridge gateway, where the host's nginx
-# reaches it. See docs/DEPLOYMENT.md.
+# MongoDB is NOT here — it is external (a hosted replica set). No service publishes a
+# port; the API is reachable only from `overseer-edge`, the external network nginx and
+# the VPS's other containers share. See docs/DEPLOYMENT.md.
 #
 #   cd deploy/vps && docker compose up -d --build
 #   docker compose --profile seed run --rm seed --allow-production   # one-off
@@ -49,6 +49,7 @@ services:
       context: ../../back-end
       dockerfile: Dockerfile
     image: haestore-api:latest
+    container_name: haestore-api
     restart: unless-stopped
     env_file: ./.env
     environment:
@@ -57,9 +58,9 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY}
-    ports:
-      # The bridge gateway, not 0.0.0.0: the host's nginx proxies here; the internet can't.
-      - "172.17.0.1:5003:5000"
+    networks:
+      - default
+      - overseer-edge
     depends_on:
       redis: { condition: service_healthy }
       meilisearch: { condition: service_healthy }
@@ -93,3 +94,8 @@ volumes:
   redis-data:
   meili-data:
   unsplash-ledger:
+
+networks:
+  # Shared with nginx and the VPS's other containers; not created here.
+  overseer-edge:
+    external: true

@@ -15,7 +15,8 @@ live key stops the API and fails the storefront build ([ADR-016](decisions/ADR-0
 browser ──► Cloudflare ──► Worker `heastore-web` (OpenNext)
                              │   pages, and /api/* proxied with the shopper's address stamped
                              ▼
-             your nginx, TLS on 443 ──► 172.17.0.1:5003 ──► API container
+             your nginx, TLS on 443 ──► haestore-api:5000 ──► API container
+                             (both on the `overseer-edge` docker network)
                                                               │
                              Redis + Meilisearch  (deploy/vps/compose.yml, no published ports)
                              MongoDB              (external replica set, e.g. Atlas)
@@ -41,6 +42,9 @@ session cookie be `__Host-` and first-party.
   [GMAIL-API-MIGRATION-NOTE.md](GMAIL-API-MIGRATION-NOTE.md).
 - **Cloudinary** — cloud name, API key and secret, for photographs uploaded in the console.
 - **Two hostnames**, one for the shop and one for the API.
+- **The `overseer-edge` docker network**, created beforehand (`docker network create overseer-edge`)
+  and already carrying nginx and the VPS's other containers. The compose file joins it as
+  `external`; it does not create it.
 
 ## Secrets, and where each one lives
 
@@ -65,31 +69,33 @@ root checkout), so the compose file's build context `../../back-end` resolves.
 cd deploy/vps
 cp .env.example .env         # then fill it in
 docker compose up -d --build
-curl -fsS http://172.17.0.1:5003/readyz
+docker compose exec api curl -fsS http://localhost:5000/readyz
 # {"status":"ready","checks":{"mongo":{…"ok":true…},"redis":{…"ok":true…},"meilisearch":{…"ok":true…}}}
 ```
 
 What the compose file runs:
 
-- **The API**, built from `back-end/Dockerfile`, published on **`172.17.0.1:5003`** only —
-  the docker bridge gateway, reachable from the host's nginx and not from the internet.
+- **The API**, built from `back-end/Dockerfile`, publishing no port at all — reachable only
+  from `overseer-edge`, the external docker network it shares with nginx and the VPS's other
+  containers, as `haestore-api:5000`.
 - **Redis**, with a password and append-only persistence. Sessions and sign-in challenges
   live here.
 - **Meilisearch** in `production` mode, which requires the master key and turns off the
   unauthenticated search preview.
-- Neither datastore publishes a port.
+- Neither datastore publishes a port, or joins `overseer-edge` — only the API does.
 
 A value left empty in `.env` (`KEY=`) is treated as unset, so the template can be copied and
 filled in gradually; a feature whose keys are missing says so when it is used.
 
-## What nginx must do for :5003
+## What nginx must do
 
-No nginx configuration ships with the project — the VPS already has one. What the API needs
-from it, and what was verified locally with an nginx in front of the API:
+No nginx configuration ships with the project — the VPS already has one, and it must be a
+container on `overseer-edge` to reach the API at all. What the API needs from it, and what
+was verified locally with an nginx in front of the API:
 
 ```nginx
 location / {
-    proxy_pass http://172.17.0.1:5003;
+    proxy_pass http://haestore-api:5000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -117,13 +123,13 @@ client_max_body_size 1m;
 ### Two rules about `API_ORIGIN`
 
 **It has no port.** OpenNext compiles the `/api/*` rewrite's destination host with
-path-to-regexp, which reads the `:5003` in `http://host:5003` as a route parameter and
+path-to-regexp, which reads a port in a URL like `http://host:5003` as a route parameter and
 fails every `/api/*` request with a 500 — nothing reaches the API, and nothing appears in its
 log. `next dev` and `next start` are unaffected, which is why this surfaced only when the
 Worker was first run against an API. The fix is the deployment's natural shape: the Worker
-talks to `https://api.example.com`, and nginx forwards to 5003. `cf:build` refuses a
-port-bearing or missing `API_ORIGIN` with a message saying so
-(`front-end/src/lib/proxy/api-origin.ts`). Checked against `@opennextjs/aws` 4.1.5.
+talks to `https://api.example.com`, and nginx forwards to the API container over
+`overseer-edge`. `cf:build` refuses a port-bearing or missing `API_ORIGIN` with a message
+saying so (`front-end/src/lib/proxy/api-origin.ts`). Checked against `@opennextjs/aws` 4.1.5.
 
 **It is needed twice.** The rewrite is fixed when the Worker is built; server components read
 it when they run. Set it in the shell for `cf:build` *and* in `wrangler.jsonc` `vars`, to the

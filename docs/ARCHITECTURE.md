@@ -121,7 +121,7 @@ and a dead analytics sink are all things the shop keeps taking orders through.
 | | |
 |---|---|
 | Frontend | Cloudflare Workers via `@opennextjs/cloudflare`, worker `heastore-web` |
-| Backend | Docker container, published on `172.17.0.1:5003:5000` |
+| Backend | Docker container, no published port — reachable only from nginx over the external `overseer-edge` network |
 
 Three Cloudflare constraints shaped the frontend design rather than being discovered
 late: the adapter does not support Node middleware, so **session gating happens in
